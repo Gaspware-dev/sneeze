@@ -1,0 +1,11 @@
+RewriteEngine On
+
+# Deny direct access to lib and data
+RewriteRule ^lib/ - [F,L]
+RewriteRule ^data/ - [F,L]
+RewriteRule ^views/ - [F,L]
+
+# Route API and pages through index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L,QSA]
