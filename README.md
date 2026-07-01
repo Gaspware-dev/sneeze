@@ -4,7 +4,7 @@ A self-contained PHP + SQLite subfolder you copy into any existing flat-file HTM
 
 ## Requirements
 
-- PHP 8.2+ with SQLite3, DOM, JSON extensions
+- PHP 8.2+ with **PDO SQLite** (`php-sqlite3` / `pdo_sqlite` extension), DOM, JSON
 - Apache with `mod_rewrite` (or nginx equivalent), or PHP built-in server for local dev
 - PHP write access to your HTML files and upload directory
 
@@ -27,6 +27,27 @@ yoursite/
    - **Step 3:** Create your admin account
 
 No changes to your existing site, `.htaccess`, or nginx config are required for a standard install.
+
+### PHP extensions
+
+Sneeze needs these PHP extensions:
+
+| Extension | Package (Ubuntu/Debian) |
+|-----------|-------------------------|
+| `pdo_sqlite` | `php8.3-sqlite3` |
+| `dom` (DOMDocument) | `php8.3-xml` |
+| `fileinfo` | usually bundled with PHP |
+
+Install in one step:
+
+```bash
+sudo apt install php8.3-sqlite3 php8.3-xml
+php -m | grep -iE 'sqlite|dom'
+```
+
+Restart your web server or dev server after installing.
+
+Optional: `php8.3-gd` for upload thumbnails.
 
 ## Local development
 

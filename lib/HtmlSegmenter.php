@@ -53,7 +53,7 @@ class HtmlSegmenter
                     'label' => $label,
                     'type' => 'block',
                     'tag' => $tag,
-                    'content' => $dom->saveHTML($node),
+                    'content' => $this->outerHtml($node),
                 ];
             }
         }
@@ -69,12 +69,15 @@ class HtmlSegmenter
         return $this->reassemble($segments, $originalHtml);
     }
 
-    public function reassemble(array $segments, string $originalHtml): string
+    /**
+     * @param bool $blocksOnly When true (Basic View save), only body blocks are updated; head is left untouched.
+     */
+    public function reassemble(array $segments, string $originalHtml, bool $blocksOnly = false): string
     {
         $dom = $this->loadDom($originalHtml);
         $docType = '';
         if (preg_match('/^<!DOCTYPE[^>]*>/i', $originalHtml, $m)) {
-            $docType = $m[0] . "\n";
+            $docType = $m[0];
         }
 
         $map = [];
@@ -82,7 +85,7 @@ class HtmlSegmenter
             $map[$seg['id']] = $seg['content'];
         }
 
-        if (isset($map['head'])) {
+        if (!$blocksOnly && isset($map['head']) && trim($map['head']) !== '') {
             $head = $dom->getElementsByTagName('head')->item(0);
             if ($head) {
                 $this->replaceInnerHtml($head, $map['head']);
@@ -96,7 +99,7 @@ class HtmlSegmenter
 
         $blocks = $this->findEditableBlocks($body);
         if (empty($blocks)) {
-            if (isset($map['body_content'])) {
+            if (isset($map['body_content']) && trim($map['body_content']) !== '') {
                 $this->replaceInnerHtml($body, $map['body_content']);
             }
         } else {
@@ -105,7 +108,7 @@ class HtmlSegmenter
                 $id = $node->attributes?->getNamedItem('data-sneeze-id')?->nodeValue
                     ?: $node->attributes?->getNamedItem('id')?->nodeValue
                     ?: ('block_' . $blockIndex);
-                if (!isset($map[$id])) {
+                if (!isset($map[$id]) || trim($map[$id]) === '') {
                     continue;
                 }
                 $newNode = $this->fragmentToNode($dom, $map[$id]);
@@ -115,11 +118,7 @@ class HtmlSegmenter
             }
         }
 
-        $html = $dom->saveHTML();
-        if ($docType && !str_starts_with($html, '<!DOCTYPE')) {
-            $html = $docType . $html;
-        }
-        return $html;
+        return $this->serializeDom($dom, $docType);
     }
 
     public function insertSection(string $html, string $sectionHtml, string $position = 'main'): string
@@ -142,11 +141,11 @@ class HtmlSegmenter
             $body->appendChild($newNode);
         }
 
-        $result = $dom->saveHTML();
-        if (preg_match('/^<!DOCTYPE[^>]*>/i', $html, $m) && !str_starts_with($result, '<!DOCTYPE')) {
-            $result = $m[0] . "\n" . $result;
+        $docType = '';
+        if (preg_match('/^<!DOCTYPE[^>]*>/i', $html, $m)) {
+            $docType = $m[0];
         }
-        return $result;
+        return $this->serializeDom($dom, $docType);
     }
 
     public function sectionTemplates(): array
@@ -181,7 +180,7 @@ class HtmlSegmenter
         $blocks = [];
         $xpath = new DOMXPath($body->ownerDocument);
 
-        foreach ($xpath->query('.//section', $body) as $section) {
+        foreach ($xpath->query('./section | ./main/section | .//main/section', $body) as $section) {
             $blocks[] = $section;
         }
         if (!empty($blocks)) {
@@ -195,7 +194,7 @@ class HtmlSegmenter
             return $blocks;
         }
 
-        $main = $xpath->query('.//main', $body)->item(0);
+        $main = $xpath->query('./main', $body)->item(0);
         if ($main) {
             foreach ($main->childNodes as $child) {
                 if ($child->nodeType === XML_ELEMENT_NODE) {
@@ -237,11 +236,34 @@ class HtmlSegmenter
 
     private function loadDom(string $html): DOMDocument
     {
+        $html = $this->stripXmlArtifacts($html);
         $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom->preserveWhiteSpace = false;
+        $dom->formatOutput = false;
         libxml_use_internal_errors(true);
-        $dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $dom->loadHTML(
+            '<?xml encoding="UTF-8">' . $html,
+            LIBXML_HTML_NODEFDTD
+        );
         libxml_clear_errors();
         return $dom;
+    }
+
+    private function serializeDom(DOMDocument $dom, string $docType = ''): string
+    {
+        $html = $dom->saveHTML();
+        $html = $this->stripXmlArtifacts($html);
+
+        if ($docType !== '' && !preg_match('/^<!DOCTYPE/i', $html)) {
+            $html = $docType . "\n" . $html;
+        }
+
+        return $html;
+    }
+
+    private function stripXmlArtifacts(string $html): string
+    {
+        return preg_replace('/<\?xml[^>]*\??>/i', '', $html) ?? $html;
     }
 
     private function innerHtml(?DOMNode $node): string
@@ -253,60 +275,85 @@ class HtmlSegmenter
         foreach ($node->childNodes as $child) {
             $html .= $node->ownerDocument?->saveHTML($child) ?? '';
         }
-        return $html;
+        return $this->stripXmlArtifacts($html);
+    }
+
+    private function outerHtml(DOMNode $node): string
+    {
+        return $this->stripXmlArtifacts($node->ownerDocument?->saveHTML($node) ?? '');
+    }
+
+    /**
+     * Parse an HTML fragment and return nodes to append (imported into target document).
+     */
+    private function parseFragment(DOMDocument $owner, string $html): array
+    {
+        $html = trim($html);
+        if ($html === '') {
+            return [];
+        }
+
+        $tmp = new DOMDocument('1.0', 'UTF-8');
+        libxml_use_internal_errors(true);
+        $wrapped = '<div id="sneeze-fragment-root">' . $html . '</div>';
+        $tmp->loadHTML('<?xml encoding="UTF-8">' . $wrapped, LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+
+        $root = $tmp->getElementById('sneeze-fragment-root');
+        if (!$root) {
+            return [];
+        }
+
+        $nodes = [];
+        foreach ($root->childNodes as $child) {
+            $imported = $owner->importNode($child, true);
+            if ($imported) {
+                $nodes[] = $imported;
+            }
+        }
+        return $nodes;
     }
 
     private function replaceInnerHtml(DOMNode $node, string $html): void
     {
-        while ($node->firstChild) {
-            $node->removeChild($node->firstChild);
-        }
+        $html = trim($html);
         if ($html === '') {
             return;
         }
-        $frag = $node->ownerDocument?->createDocumentFragment();
-        if ($frag && @$frag->appendXML('<wrapper>' . $html . '</wrapper>') === false) {
-            $tmp = new DOMDocument();
-            libxml_use_internal_errors(true);
-            $tmp->loadHTML('<meta charset="utf-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-            libxml_clear_errors();
-            $body = $tmp->getElementsByTagName('body')->item(0);
-            if ($body) {
-                foreach ($body->childNodes as $child) {
-                    $imported = $node->ownerDocument?->importNode($child, true);
-                    if ($imported) {
-                        $node->appendChild($imported);
-                    }
-                }
-            }
+
+        $owner = $node->ownerDocument;
+        if (!$owner) {
             return;
         }
-        if ($frag) {
-            $wrapper = $frag->firstChild;
-            if ($wrapper) {
-                while ($wrapper->firstChild) {
-                    $node->appendChild($wrapper->firstChild);
-                }
-            }
+
+        $newNodes = $this->parseFragment($owner, $html);
+        if ($newNodes === []) {
+            return;
+        }
+
+        while ($node->firstChild) {
+            $node->removeChild($node->firstChild);
+        }
+
+        foreach ($newNodes as $child) {
+            $node->appendChild($child);
         }
     }
 
     private function fragmentToNode(DOMDocument $dom, string $html): ?DOMNode
     {
-        $tmp = new DOMDocument();
-        libxml_use_internal_errors(true);
-        $tmp->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-        libxml_clear_errors();
+        $nodes = $this->parseFragment($dom, $html);
+        if ($nodes === []) {
+            return null;
+        }
+        if (count($nodes) === 1) {
+            return $nodes[0];
+        }
 
-        foreach ($tmp->childNodes as $child) {
-            if ($child->nodeType === XML_ELEMENT_NODE) {
-                return $dom->importNode($child, true);
-            }
+        $wrapper = $dom->createElement('div');
+        foreach ($nodes as $child) {
+            $wrapper->appendChild($child);
         }
-        $body = $tmp->getElementsByTagName('body')->item(0);
-        if ($body && $body->firstChild) {
-            return $dom->importNode($body->firstChild, true);
-        }
-        return null;
+        return $wrapper;
     }
 }

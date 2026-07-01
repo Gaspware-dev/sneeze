@@ -12,6 +12,7 @@ spl_autoload_register(function (string $class) use ($installDir): void {
 });
 
 Config::init($installDir);
+Requirements::check();
 Database::connect(Config::dataDir());
 Auth::startSession($installDir);
 
@@ -188,15 +189,18 @@ function handleApi(string $method, string $uri): void
             Response::error('path and segments required');
         }
         $original = $files->read($path, false);
-        $content = $segmenter->reassemble($segments, $original);
+        $blocksOnly = !empty($body['basic_only']) || !empty($body['sanitize']);
+
         if (!empty($body['sanitize'])) {
             foreach ($segments as &$seg) {
                 if (($seg['type'] ?? '') === 'block') {
                     $seg['content'] = $sanitizer->clean($seg['content']);
                 }
             }
-            $content = $segmenter->reassemble($segments, $original);
+            unset($seg);
         }
+
+        $content = $segmenter->reassemble($segments, $original, $blocksOnly);
         $files->write($path, $content);
         Auth::audit((int) $user['id'], 'save_segments', $path);
         Response::json(['ok' => true, 'content' => $content]);

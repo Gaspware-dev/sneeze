@@ -16,6 +16,12 @@ class Database
             mkdir($dataDir, 0750, true);
         }
 
+        if (!extension_loaded('pdo_sqlite')) {
+            throw new RuntimeException(
+                'PHP PDO SQLite driver is not installed. See README — apt install php8.3-sqlite3'
+            );
+        }
+
         $path = $dataDir . '/sneeze.db';
         self::$pdo = new PDO('sqlite:' . $path, null, null, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,

@@ -253,6 +253,7 @@ async function saveFile() {
         path: state.currentFile,
         segments: state.segments,
         sanitize: state.viewMode === 'basic',
+        basic_only: state.viewMode === 'basic',
       }),
     });
     state.dirty = false;
