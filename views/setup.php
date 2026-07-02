@@ -8,6 +8,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Setup — <?= htmlspecialchars($title) ?></title>
+  <?php require __DIR__ . '/partials/favicon.php'; ?>
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/tokens.css">
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/base.css">
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/components.css">
@@ -16,6 +17,7 @@
 <body>
   <div class="auth-page">
     <div class="auth-card card">
+      <img src="<?= htmlspecialchars($assetBase) ?>/img/logo.png" alt="Sneeze" class="brand-logo brand-logo--full" width="200" height="56">
       <h1>Sneeze Setup</h1>
       <p class="contact-modal__lead">Configure your drop-in admin panel. Your existing site will not be modified until you edit files.</p>
 

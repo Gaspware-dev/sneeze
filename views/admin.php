@@ -9,6 +9,7 @@ $user = Auth::user();
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><?= htmlspecialchars($title) ?></title>
+  <?php require __DIR__ . '/partials/favicon.php'; ?>
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/tokens.css">
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/base.css">
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/components.css">
@@ -22,7 +23,10 @@ $user = Auth::user();
 <body>
   <header class="admin-header">
     <div class="admin-header__inner">
-      <div class="admin-header__brand" id="app-title"><?= htmlspecialchars($title) ?></div>
+      <div class="admin-header__brand">
+        <img src="<?= htmlspecialchars($assetBase) ?>/img/favicon.png" alt="" class="brand-logo brand-logo--icon" width="32" height="32" aria-hidden="true">
+        <span id="app-title"><?= htmlspecialchars($title) ?></span>
+      </div>
       <nav>
         <ul class="admin-nav" id="admin-nav">
           <li><button type="button" class="admin-nav__link is-active" data-panel="pages">Pages</button></li>

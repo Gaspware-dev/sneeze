@@ -19,11 +19,31 @@
 }
 
 .admin-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
   font-family: var(--font-display);
   font-size: 1.25rem;
   font-weight: 700;
   color: var(--color-white);
   white-space: nowrap;
+}
+
+.brand-logo {
+  display: block;
+  flex-shrink: 0;
+}
+
+.brand-logo--icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.brand-logo--full {
+  width: min(200px, 70%);
+  height: auto;
+  margin: 0 auto 1rem;
 }
 
 .admin-nav {
