@@ -51,10 +51,9 @@ Optional: `php8.3-gd` for upload thumbnails.
 
 ## Local development
 
-PHP's built-in server does not read `.htaccess`. Use the included dev router from your site root:
+PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside `index.html` and the `sneeze/` folder), then start the server from there:
 
 ```bash
-# From demo-site/ (or your site root with sneeze/ alongside HTML files)
 php -S localhost:8080 router.php
 ```
 
@@ -62,7 +61,38 @@ Then open `http://localhost:8080/sneeze/`.
 
 On Apache/nginx, `.htaccess` in `sneeze/` handles routing automatically.
 
-A demo site is included at `demo-site/` for testing.
+### Dev router (`router.php`)
+
+Create this file at your site root if you use PHP's built-in server:
+
+```php
+<?php
+// Dev router for PHP built-in server — not needed on Apache/nginx with .htaccess
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+if (str_starts_with($uri, '/sneeze')) {
+    $sneezeUri = substr($uri, strlen('/sneeze')) ?: '/';
+    $_SERVER['SCRIPT_NAME'] = '/sneeze/index.php';
+    $_SERVER['REQUEST_URI'] = '/sneeze' . ($sneezeUri === '/' ? '/' : $sneezeUri);
+    chdir(__DIR__ . '/sneeze');
+    require __DIR__ . '/sneeze/index.php';
+    return true;
+}
+
+$file = __DIR__ . $uri;
+if ($uri !== '/' && is_file($file)) {
+    return false;
+}
+
+if ($uri === '/' || $uri === '') {
+    readfile(__DIR__ . '/index.html');
+    return true;
+}
+
+http_response_code(404);
+echo 'Not found';
+return true;
+```
 
 ## Features
 
