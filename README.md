@@ -107,7 +107,13 @@ return true;
 
 ## Publish pipeline
 
-On **Publish**, Sneeze concatenates design tokens, global CSS/JS, template CSS/JS, CSS/JS of used block types, and page CSS/JS, interpolates block fields into templates, and writes a single `.html` file. Preview uses the same compiler (plus selection chrome).
+On **Publish**, Sneeze concatenates design tokens, global CSS/JS, template CSS/JS, CSS/JS of used block types, and page CSS/JS, then writes a single HTML file:
+
+- One minified `<style>` in `<head>` (only CSS for blocks actually on the page)
+- One minified `<script>` at the end of `<body>` (inline scripts cannot use `defer` without `src`)
+- Markup normalized so the file can pass [validator.w3.org](https://validator.w3.org/)
+
+Preview uses the same compiler without minifying, plus selection chrome.
 
 ## Security
 

@@ -161,10 +161,12 @@ $user = Auth::user();
       </section>
       <section class="card card--flat">
         <h3>Global CSS</h3>
+        <p class="muted">Inlined as one minified <code>&lt;style&gt;</code> in <code>&lt;head&gt;</code> on publish. Unused block CSS is omitted.</p>
         <div id="stylesheet-list"></div>
       </section>
       <section class="card card--flat">
         <h3>Global JS</h3>
+        <p class="muted">Inlined as one minified <code>&lt;script&gt;</code> at the end of <code>&lt;body&gt;</code> so it does not block first paint. Empty scripts are not emitted.</p>
         <div id="script-list"></div>
       </section>
     </div>

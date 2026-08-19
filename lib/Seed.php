@@ -17,10 +17,6 @@ class Seed
         )->execute(['Theme', self::themeCss()]);
 
         $pdo->prepare(
-            'INSERT INTO scripts (name, js, placement, sort_order, enabled) VALUES (?, ?, ?, 0, 1)'
-        )->execute(['Site', self::themeJs(), 'footer']);
-
-        $pdo->prepare(
             'INSERT INTO templates (name, slug, html, css, js, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
         )->execute([
             'Base',
@@ -178,7 +174,14 @@ class Seed
     {
         return <<<'CSS'
 *, *::before, *::after { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -216,11 +219,6 @@ p { margin: 0 0 1rem; }
 .btn:hover { background: var(--color-brand-dark); color: var(--color-white); }
 .prose :last-child { margin-bottom: 0; }
 CSS;
-    }
-
-    public static function themeJs(): string
-    {
-        return "document.documentElement.classList.add('is-ready');\n";
     }
 
     public static function templateCss(): string
@@ -273,7 +271,7 @@ CSS;
       <a class="site-logo" href="{{site.home_url}}">{{site.title}}</a>
       <nav class="site-nav">
         {{#each pages}}
-        <a href="{{url}}" class="{{#if current}}is-current{{/if}}">{{title}}</a>
+        <a href="{{url}}"{{#if current}} class="is-current" aria-current="page"{{/if}}>{{title}}</a>
         {{/each}}
       </nav>
     </div>
@@ -312,7 +310,7 @@ HTML;
                 ],
                 'html' => <<<'HTML'
 <section class="hero">
-  {{#if image}}<div class="hero__media"><img src="{{image}}" alt=""></div>{{/if}}
+  {{#if image}}<div class="hero__media"><img src="{{image}}" alt="" decoding="async"></div>{{/if}}
   <div class="hero__inner wrap">
     <h1>{{title}}</h1>
     {{#if subtitle}}<p class="lede">{{subtitle}}</p>{{/if}}
@@ -372,7 +370,7 @@ CSS,
                 ],
                 'html' => <<<'HTML'
 <figure class="figure wrap">
-  {{#if src}}<img src="{{src}}" alt="{{alt}}">{{/if}}
+  {{#if src}}<img src="{{src}}" alt="{{alt}}" loading="lazy" decoding="async">{{/if}}
   {{#if caption}}<figcaption>{{caption}}</figcaption>{{/if}}
 </figure>
 HTML,
@@ -422,15 +420,18 @@ CSS,
                     'slots' => [],
                 ],
                 'html' => <<<'HTML'
-<blockquote class="quote wrap">
-  <p>{{quote}}</p>
-  {{#if cite}}<cite>— {{cite}}</cite>{{/if}}
-</blockquote>
+<figure class="quote wrap">
+  <blockquote>
+    <p>{{quote}}</p>
+  </blockquote>
+  {{#if cite}}<figcaption>{{cite}}</figcaption>{{/if}}
+</figure>
 HTML,
                 'css' => <<<'CSS'
-.quote { padding: 2rem 0; border: 0; margin: 0 auto; max-width: 40rem; text-align: center; }
+.quote { padding: 2rem 0; margin: 0 auto; max-width: 40rem; text-align: center; border: 0; }
+.quote blockquote { margin: 0; border: 0; padding: 0; }
 .quote p { font-family: var(--font-display); font-size: 1.5rem; color: var(--color-navy); }
-.quote cite { color: var(--color-muted); font-style: normal; }
+.quote figcaption { color: var(--color-muted); font-style: normal; }
 CSS,
             ],
             [

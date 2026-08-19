@@ -71,9 +71,13 @@ On preview and on publish, `Compiler` builds one document:
 1. Resolve the page’s template and block tree (nested by `parent_id` + `slot`).
 2. Render each block: interpolate fields into the type’s HTML; replace `{{slot:name}}` with children.
 3. Concatenate CSS in order: design tokens → global stylesheets → template CSS → CSS of used block types → page CSS.
-4. Concatenate JS: global (head/footer) → template JS → JS of used block types → page JS.
-5. Inject CSS at `<!-- sneeze:css -->` (or before `</head>`), JS at `<!-- sneeze:js -->` (or before `</body>`).
-6. **Publish** writes `{slug}.html` (`index` → `index.html`) into the configured site root, atomically, with a backup of the previous file.
+4. Concatenate JS in order: global head scripts → global footer scripts → template JS → JS of used block types → page JS.
+5. Inject **one** minified `<style>` at the end of `<head>` (render-blocking CSS is correct for inlined critical styles; unused block-type CSS is omitted).
+6. Inject **one** minified `<script>` immediately before `</body>`. Inline scripts cannot use `defer`/`async` (invalid without `src`), so they never go in `<head>` — including scripts marked “head”, which still run first in the footer bundle.
+7. Normalize markup for [the W3C HTML checker](https://validator.w3.org/): strip empty `class`/`id`/`style`, ensure `alt` on images, require `<!DOCTYPE html>`, drop empty style/script tags.
+8. **Publish** writes `{slug}.html` (`index` → `index.html`) into the configured site root, atomically, with a backup of the previous file.
+
+Preview skips minification so the iframe stays readable; published files are minified.
 
 Template language (intentionally small, no Composer):
 

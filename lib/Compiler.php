@@ -47,7 +47,7 @@ class Compiler
         $html = $this->interpolator->render($template['html'], $context);
         $assets = $this->collectAssets($template, $blocks, $page);
 
-        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot']);
+        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
 
         if ($preview) {
             $html = $this->injectPreviewChrome($html);
@@ -65,7 +65,7 @@ class Compiler
         ];
         $html = $this->interpolator->render($template['html'], $context);
         $assets = $this->collectAssets($template, $blocks, $page);
-        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot']);
+        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
         if ($preview) {
             $html = $this->injectPreviewChrome($html);
         }
@@ -311,26 +311,72 @@ class Compiler
         ];
     }
 
-    private function inject(string $html, string $css, string $jsHead, string $jsFoot): string
+    private function inject(string $html, string $css, string $jsHead, string $jsFoot, bool $preview): string
     {
-        $styleTag = $css !== '' ? "<style>\n{$css}\n</style>" : '';
-        $headScript = $jsHead !== '' ? "<script>\n{$jsHead}\n</script>" : '';
-        $footScript = $jsFoot !== '' ? "<script>\n{$jsFoot}\n</script>" : '';
+        $html = str_replace(['<!-- sneeze:css -->', '<!-- sneeze:js -->'], '', $html);
 
-        $headBits = trim($styleTag . "\n" . $headScript);
-        if (str_contains($html, '<!-- sneeze:css -->')) {
-            $html = str_replace('<!-- sneeze:css -->', $headBits, $html);
-        } elseif ($headBits !== '' && preg_match('/<\/head>/i', $html)) {
-            $html = preg_replace('/<\/head>/i', $headBits . "\n</head>", $html, 1) ?? $html;
+        $css = trim($css);
+        // All JS runs after parse: head-placement first, then footer. Inline scripts
+        // cannot use defer/async (invalid without src) so they belong before </body>.
+        $js = trim($jsHead);
+        $foot = trim($jsFoot);
+        if ($js !== '' && $foot !== '') {
+            $js .= "\n" . $foot;
+        } elseif ($js === '') {
+            $js = $foot;
         }
 
-        if (str_contains($html, '<!-- sneeze:js -->')) {
-            $html = str_replace('<!-- sneeze:js -->', $footScript, $html);
-        } elseif ($footScript !== '' && preg_match('/<\/body>/i', $html)) {
-            $html = preg_replace('/<\/body>/i', $footScript . "\n</body>", $html, 1) ?? $html;
+        if (!$preview) {
+            if ($css !== '') {
+                $css = Minifier::css($css);
+            }
+            if ($js !== '') {
+                $js = Minifier::js($js);
+            }
         }
 
-        return $html;
+        if ($css !== '') {
+            $css = Minifier::escapeInline($css, 'style');
+            $style = '<style>' . $css . '</style>';
+            if (preg_match('/<\/head>/i', $html)) {
+                $html = preg_replace('/<\/head>/i', $style . "\n</head>", $html, 1) ?? ($html . $style);
+            } else {
+                $html = $style . $html;
+            }
+        }
+
+        if ($js !== '') {
+            $js = Minifier::escapeInline($js, 'script');
+            $script = '<script>' . $js . '</script>';
+            if (preg_match('/<\/body>/i', $html)) {
+                $html = preg_replace('/<\/body>/i', $script . "\n</body>", $html, 1) ?? ($html . $script);
+            } else {
+                $html .= $script;
+            }
+        }
+
+        return $this->normalizeHtml($html);
+    }
+
+    private function normalizeHtml(string $html): string
+    {
+        $html = preg_replace('/\s+(class|id|style|title)="\s*"/i', '', $html) ?? $html;
+
+        $html = preg_replace_callback('/<img\b([^>]*)>/i', static function (array $m): string {
+            $attrs = $m[1];
+            if (preg_match('/\balt\s*=/i', $attrs)) {
+                return '<img' . $attrs . '>';
+            }
+            return '<img alt=""' . $attrs . '>';
+        }, $html) ?? $html;
+
+        if (!preg_match('/^\s*<!DOCTYPE html>/i', $html)) {
+            $html = "<!DOCTYPE html>\n" . ltrim($html);
+        }
+
+        $html = preg_replace("/[ \t]+$/m", '', $html) ?? $html;
+        $html = preg_replace("/\n{3,}/", "\n\n", $html) ?? $html;
+        return rtrim($html) . "\n";
     }
 
     private function injectPreviewChrome(string $html): string
