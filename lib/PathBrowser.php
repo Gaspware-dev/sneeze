@@ -43,12 +43,15 @@ class PathBrowser
                     'path' => $full,
                 ];
             } elseif (is_file($full) && str_ends_with(strtolower($entry), '.html')) {
-                $htmlFiles[] = $entry;
+                $htmlFiles[] = [
+                    'name' => $entry,
+                    'path' => $full,
+                ];
             }
         }
 
         usort($dirs, fn($a, $b) => strcasecmp($a['name'], $b['name']));
-        sort($htmlFiles, SORT_NATURAL | SORT_FLAG_CASE);
+        usort($htmlFiles, fn($a, $b) => strnatcasecmp($a['name'], $b['name']));
 
         $parent = dirname($target);
         $canGoUp = $this->isWithinAllowed($parent) && $parent !== $target;
@@ -83,6 +86,26 @@ class PathBrowser
             'path' => $resolved,
             'html_count' => $htmlCount,
             'writable' => true,
+        ];
+    }
+
+    public function readHtmlFile(string $path): array
+    {
+        $resolved = $this->resolveSafe($path);
+        if (!is_file($resolved) || !str_ends_with(strtolower($resolved), '.html')) {
+            Response::error('Not an HTML file');
+        }
+        if ($this->isBlocked($resolved)) {
+            Response::error('Path outside allowed area', 403);
+        }
+        $html = file_get_contents($resolved);
+        if ($html === false) {
+            Response::error('Unable to read file', 500);
+        }
+        return [
+            'path' => $resolved,
+            'name' => basename($resolved),
+            'html' => $html,
         ];
     }
 

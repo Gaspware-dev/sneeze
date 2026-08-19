@@ -29,6 +29,7 @@ $user = Auth::user();
       <select id="page-select"></select>
     </label>
     <button type="button" class="btn btn--header btn--sm" id="btn-new-page">New page</button>
+    <button type="button" class="btn btn--header btn--sm admin-only hidden" id="btn-import-html">Import HTML</button>
 
     <nav class="studio-workspaces" id="workspace-nav">
       <button type="button" class="studio-workspaces__btn is-active" data-workspace="studio">Studio</button>
@@ -131,7 +132,10 @@ $user = Auth::user();
       <section class="card card--flat">
         <div class="panel-head">
           <h3>Templates</h3>
-          <button type="button" class="btn btn--primary btn--sm admin-only hidden" id="btn-new-template">New</button>
+          <div class="panel-head__actions">
+            <button type="button" class="btn btn--ghost btn--sm admin-only hidden" id="btn-import-template">Import HTML</button>
+            <button type="button" class="btn btn--primary btn--sm admin-only hidden" id="btn-new-template">New</button>
+          </div>
         </div>
         <ul class="events-list" id="template-list"></ul>
       </section>
@@ -194,9 +198,10 @@ $user = Auth::user();
         <h3>Media library</h3>
         <label class="btn btn--primary btn--sm">
           Upload
-          <input type="file" id="media-upload" accept="image/*,.pdf,.svg" hidden>
+          <input type="file" id="media-upload" accept="image/*,.pdf,.svg,.woff,.woff2" hidden>
         </label>
       </div>
+      <p class="muted">Files are stored in the studio (<code>sneeze/data/uploads</code>) until you publish. Publish copies used files into the site asset folder.</p>
       <div class="media-grid" id="media-grid"></div>
     </section>
   </div>
@@ -286,9 +291,11 @@ $user = Auth::user();
           <input type="text" id="settings-web-base">
         </div>
         <div class="contact-form__field">
-          <label for="settings-upload-dir">Upload directory</label>
-          <input type="text" id="settings-upload-dir">
+          <label for="settings-upload-dir">Published asset folder</label>
+          <input type="text" id="settings-upload-dir" placeholder="uploads">
+          <p class="muted" style="margin-top:0.5rem">Relative to the site folder. Used files are copied here on Publish.</p>
         </div>
+        <p class="muted" id="settings-draft-dir">Studio upload folder: <code>sneeze/data/uploads</code> (not public).</p>
         <div class="contact-form__field">
           <label for="settings-retention">Publish backup retention</label>
           <input type="number" id="settings-retention" min="1" max="100">
@@ -334,6 +341,32 @@ $user = Auth::user();
           <button type="submit" class="btn btn--primary">Create</button>
         </div>
       </form>
+    </div>
+  </dialog>
+
+  <dialog class="contact-modal contact-modal--wide" id="modal-import">
+    <div class="contact-modal__inner">
+      <button type="button" class="contact-modal__close" data-close-modal>&times;</button>
+      <h2 class="contact-modal__title">Import HTML</h2>
+      <p class="contact-modal__lead">Turn an existing page into a Sneeze template (document chrome) plus a page whose main content is an HTML block. Local images are copied into the studio library.</p>
+      <div class="contact-form__field">
+        <label for="import-file">Upload an HTML file</label>
+        <input type="file" id="import-file" accept=".html,.htm,text/html">
+      </div>
+      <p class="muted">Or browse the site folder:</p>
+      <div class="breadcrumb" id="import-breadcrumb"></div>
+      <ul class="dir-list" id="import-dir-list"></ul>
+      <p class="muted" id="import-selected">No site file selected.</p>
+      <div class="contact-form__field">
+        <label for="import-name">Name</label>
+        <input type="text" id="import-name" placeholder="About">
+      </div>
+      <label class="toolchain-check"><input type="checkbox" id="import-create-template" checked> Create a template from the document chrome</label>
+      <label class="toolchain-check"><input type="checkbox" id="import-create-page" checked> Create a page from the main content</label>
+      <label class="toolchain-check"><input type="checkbox" id="import-copy-assets" checked> Copy local images and other assets into the studio library</label>
+      <div class="contact-form__actions">
+        <button type="button" class="btn btn--primary" id="btn-import-run">Import</button>
+      </div>
     </div>
   </dialog>
 

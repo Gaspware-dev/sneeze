@@ -50,8 +50,9 @@
           <input type="text" id="site-title" value="Sneeze Admin">
         </div>
         <div class="contact-form__field">
-          <label for="upload-dir">Upload folder (inside site)</label>
+          <label for="upload-dir">Published asset folder (inside site)</label>
           <input type="text" id="upload-dir" value="uploads">
+          <p class="card__meta" style="margin-top:0.5rem">Studio uploads stay in <code>sneeze/data/uploads</code> until you publish. Publish copies used files into this folder.</p>
         </div>
         <div class="contact-form__actions">
           <button type="button" class="btn btn--ghost" id="btn-step2-back">Back</button>

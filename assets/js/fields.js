@@ -51,7 +51,7 @@ export function renderFields(container, schema, data, onChange, helpers) {
       const el = document.createElement('input');
       el.type = 'url';
       el.value = value;
-      el.placeholder = '/uploads/…';
+      el.placeholder = 'uploads/…';
       el.addEventListener('input', () => onChange(field.name, el.value));
       const btn = document.createElement('button');
       btn.type = 'button';

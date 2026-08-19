@@ -9,7 +9,7 @@ See [PLAN.md](PLAN.md) for the redesign architecture.
 
 - PHP 8.2+ with **PDO SQLite** (`php-sqlite3` / `pdo_sqlite`), DOM, JSON, fileinfo
 - Apache with `mod_rewrite` (or nginx equivalent), or PHP built-in server for local dev
-- PHP write access to the folder where published HTML should land (and the upload directory)
+- PHP write access to the folder where published HTML should land (and the published asset folder)
 
 ## Installation
 
@@ -18,18 +18,21 @@ See [PLAN.md](PLAN.md) for the redesign architecture.
 ```
 yoursite/
 ├── index.html       ← written on Publish
-├── uploads/
+├── uploads/         ← published assets (configurable)
 └── sneeze/          ← copy here
+    └── data/uploads ← studio drafts (not public)
 ```
 
 2. Visit `https://yoursite.example/sneeze/` in your browser.
 
 3. Complete the setup wizard:
    - **Step 1:** Choose the writable folder for published HTML (defaults to `../`)
-   - **Step 2:** Set the public URL path (usually `/`)
+   - **Step 2:** Set the public URL path (usually `/`) and the **published asset folder** (e.g. `uploads` or `assets`)
    - **Step 3:** Create your admin account
 
-Sneeze seeds a starter template, block types, and two draft pages. **Publish** writes `index.html` / `about.html` into the site folder. Existing HTML with the same names is backed up under `sneeze/data/backups/` first.
+Studio uploads go to `sneeze/data/uploads` and are not public. **Publish** copies files used on a page into `{site}/{asset-folder}/`. Existing HTML with the same names is backed up under `sneeze/data/backups/` first.
+
+You can **import a preexisting HTML file** from the studio (or Library): Sneeze builds a template from the document chrome (`<header>`, `<nav>`, `<footer>`, …), puts `<main>` into an HTML block on a new page, and copies local images into the studio library.
 
 ### PHP extensions
 
@@ -100,7 +103,8 @@ return true;
 - **Design tokens** — JSON tokens compile to `:root` CSS variables and are inlined on publish
 - **Draft vs publish** — save to the database; publish merges one HTML file per page
 - **Backup on publish** — previous files copied to `sneeze/data/backups/`
-- **Media library** — uploads to `{site}/uploads/` (binaries stay on disk)
+- **Media library** — studio uploads stay in `sneeze/data/uploads` until publish copies used files into the site asset folder
+- **HTML import** — turn an existing page into a template + HTML block
 - **CMS cache** — fetch JSON from a headless CMS in the admin; visitors never call it
 - **Users** — admin and editor roles
 - **TypeScript** — page/block/global scripts compile to JS on preview and publish
@@ -126,7 +130,7 @@ Preview uses the same compiler without minifying, plus selection chrome. Optiona
 
 ## Removing Sneeze
 
-Delete the `sneeze/` folder. Your last published HTML files and `uploads/` remain. Drafts, backups, and the database inside `sneeze/data/` are removed with the folder.
+Delete the `sneeze/` folder. Your last published HTML files and the published asset folder remain. Drafts, unpublished media, backups, and the database inside `sneeze/data/` are removed with the folder.
 
 ## Apache configuration
 

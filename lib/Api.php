@@ -36,7 +36,7 @@ class Api
 
             Config::set('site_root', realpath($siteRoot));
             Config::set('site_web_base', $body['site_web_base'] ?? Config::detectWebBase());
-            Config::set('upload_dir', $body['upload_dir'] ?? 'uploads');
+            Config::set('upload_dir', Config::sanitizeUploadDir((string) ($body['upload_dir'] ?? 'uploads')));
             Config::set('site_title', $body['site_title'] ?? 'Sneeze Admin');
             Config::set('setup_complete', true);
             Config::save();
@@ -272,6 +272,10 @@ class Api
             Response::json(['ok' => true]);
         }
 
+        if (preg_match('#^/api/media/file/(\d+)$#', $uri, $m) && $method === 'GET') {
+            $media->stream((int) $m[1]);
+        }
+
         if (preg_match('#^/api/media/thumb/(\d+)$#', $uri, $m) && $method === 'GET') {
             $thumb = Config::dataDir() . '/thumbs/' . $m[1] . '.jpg';
             if (!is_file($thumb)) {
@@ -281,6 +285,54 @@ class Api
             header('Content-Type: image/jpeg');
             readfile($thumb);
             exit;
+        }
+
+        if ($uri === '/api/import/html' && $method === 'POST') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            $html = '';
+            $sourcePath = null;
+            $name = null;
+            $slug = null;
+            $opts = [];
+            if (isset($_FILES['file']) && is_array($_FILES['file']) && ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+                $html = (string) file_get_contents($_FILES['file']['tmp_name']);
+                $name = pathinfo((string) ($_FILES['file']['name'] ?? 'imported'), PATHINFO_FILENAME);
+                $opts = [
+                    'name' => $_POST['name'] ?? $name,
+                    'slug' => $_POST['slug'] ?? null,
+                    'create_template' => ($_POST['create_template'] ?? '1') !== '0',
+                    'create_page' => ($_POST['create_page'] ?? '1') !== '0',
+                    'copy_assets' => ($_POST['copy_assets'] ?? '1') !== '0',
+                    'template_id' => isset($_POST['template_id']) ? (int) $_POST['template_id'] : 0,
+                    'user_id' => (int) $user['id'],
+                ];
+            } else {
+                $body = self::jsonBody();
+                if (!empty($body['path'])) {
+                    $file = $pathBrowser->readHtmlFile((string) $body['path']);
+                    $html = $file['html'];
+                    $sourcePath = $file['path'];
+                    $name = pathinfo($file['name'], PATHINFO_FILENAME);
+                } else {
+                    $html = (string) ($body['html'] ?? '');
+                    $name = $body['name'] ?? 'Imported';
+                    $sourcePath = isset($body['source_path']) ? (string) $body['source_path'] : null;
+                }
+                $opts = [
+                    'name' => $body['name'] ?? $name,
+                    'slug' => $body['slug'] ?? null,
+                    'source_path' => $sourcePath,
+                    'create_template' => ($body['create_template'] ?? true) !== false,
+                    'create_page' => ($body['create_page'] ?? true) !== false,
+                    'copy_assets' => ($body['copy_assets'] ?? true) !== false,
+                    'template_id' => (int) ($body['template_id'] ?? 0),
+                    'user_id' => (int) $user['id'],
+                ];
+            }
+            $result = (new HtmlImporter())->import($html, $opts);
+            Auth::audit((int) $user['id'], 'import_html', $result['page']['slug'] ?? $result['template']['slug'] ?? '');
+            Response::json($result);
         }
 
         if ($uri === '/api/cms/sources' && $method === 'GET') {
@@ -387,7 +439,7 @@ class Api
                 Config::set('site_web_base', $body['site_web_base']);
             }
             if (isset($body['upload_dir'])) {
-                Config::set('upload_dir', trim($body['upload_dir'], '/'));
+                Config::set('upload_dir', Config::sanitizeUploadDir((string) $body['upload_dir']));
             }
             if (isset($body['backup_retention'])) {
                 Config::set('backup_retention', max(1, (int) $body['backup_retention']));
@@ -415,6 +467,7 @@ class Api
             'site_title' => Config::get('site_title'),
             'site_web_base' => Config::siteWebBase(),
             'upload_dir' => Config::uploadDir(),
+            'draft_upload_dir' => 'sneeze/data/uploads',
         ];
     }
 }

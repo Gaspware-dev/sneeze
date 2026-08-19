@@ -371,6 +371,12 @@ body.studio-app {
   margin: 0;
 }
 
+.panel-head__actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
 .studio-toast {
   position: fixed;
   top: 68px;

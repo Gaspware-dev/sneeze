@@ -81,6 +81,7 @@ async function init() {
     bindCms();
     bindUsers();
     bindSettings();
+    bindImport();
     await Promise.all([loadTypes(), loadTemplates(), loadPages()]);
     if (state.pages[0]) await openPage(state.pages[0].id);
   } catch (e) {
@@ -107,6 +108,7 @@ function bindShell() {
   document.getElementById('btn-new-page').addEventListener('click', () => {
     document.getElementById('modal-new-page').showModal();
   });
+  document.getElementById('btn-import-html')?.addEventListener('click', () => openImportModal());
 
   document.getElementById('new-page-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -582,6 +584,7 @@ function pickMedia(cb) {
 }
 
 function bindLibrary() {
+  document.getElementById('btn-import-template')?.addEventListener('click', () => openImportModal());
   document.getElementById('btn-new-template')?.addEventListener('click', async () => {
     const tpl = (await api('api/templates', {
       method: 'POST',
@@ -811,11 +814,12 @@ async function fillMediaGrid(grid, picking, items) {
     div.className = 'media-item';
     const img = item.mime?.startsWith('image/')
       ? `<img src="${escapeAttr(item.thumb ? apiUrl(item.thumb) : item.url)}" alt="">`
-      : '<div class="media-item__name">PDF</div>';
-    div.innerHTML = `${img}<div class="media-item__name">${escapeHtml(item.filename)}</div>`;
+      : '<div class="media-item__name">File</div>';
+    const draft = item.published ? '' : ' <span class="muted">draft</span>';
+    div.innerHTML = `${img}<div class="media-item__name">${escapeHtml(item.filename)}${draft}</div>`;
     div.addEventListener('click', () => {
       if (picking && state.mediaPicker) {
-        state.mediaPicker(item.url);
+        state.mediaPicker(item.path || item.url);
         document.getElementById('modal-media-pick').close();
       }
     });
@@ -932,6 +936,119 @@ async function loadUsers() {
       tr.lastChild.appendChild(btn);
     }
     tbody.appendChild(tr);
+  });
+}
+
+let importFilePath = null;
+
+function openImportModal() {
+  importFilePath = null;
+  const fileInput = document.getElementById('import-file');
+  if (fileInput) fileInput.value = '';
+  document.getElementById('import-name').value = '';
+  document.getElementById('import-selected').textContent = 'No site file selected.';
+  document.getElementById('modal-import').showModal();
+  loadImportBrowse();
+}
+
+async function loadImportBrowse(path) {
+  const q = path ? `?path=${encodeURIComponent(path)}` : '';
+  const data = await api(`api/settings/browse${q}`);
+  document.getElementById('import-breadcrumb').textContent = data.path;
+  const list = document.getElementById('import-dir-list');
+  list.innerHTML = '';
+  if (data.parent) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dir-up';
+    btn.textContent = '↑ Parent folder';
+    btn.addEventListener('click', () => loadImportBrowse(data.parent));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+  data.directories.forEach((dir) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = `📁 ${dir.name}`;
+    btn.addEventListener('click', () => loadImportBrowse(dir.path));
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+  (data.html_files || []).forEach((file) => {
+    const name = typeof file === 'string' ? file : file.name;
+    const full = typeof file === 'string' ? `${data.path}/${file}` : file.path;
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = name;
+    btn.addEventListener('click', () => {
+      importFilePath = full;
+      document.getElementById('import-selected').textContent = `Selected: ${name}`;
+      if (!document.getElementById('import-name').value) {
+        document.getElementById('import-name').value = name.replace(/\.html?$/i, '');
+      }
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+}
+
+function bindImport() {
+  document.getElementById('import-file')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    importFilePath = null;
+    document.getElementById('import-selected').textContent = `Upload: ${file.name}`;
+    if (!document.getElementById('import-name').value) {
+      document.getElementById('import-name').value = file.name.replace(/\.html?$/i, '');
+    }
+  });
+  document.getElementById('btn-import-run')?.addEventListener('click', async () => {
+    const name = document.getElementById('import-name').value.trim();
+    const payload = {
+      name: name || undefined,
+      create_template: document.getElementById('import-create-template').checked,
+      create_page: document.getElementById('import-create-page').checked,
+      copy_assets: document.getElementById('import-copy-assets').checked,
+      template_id: state.templates[0]?.id,
+    };
+    try {
+      let data;
+      const file = document.getElementById('import-file').files?.[0];
+      if (file) {
+        const body = new FormData();
+        body.append('file', file);
+        if (payload.name) body.append('name', payload.name);
+        body.append('create_template', payload.create_template ? '1' : '0');
+        body.append('create_page', payload.create_page ? '1' : '0');
+        body.append('copy_assets', payload.copy_assets ? '1' : '0');
+        if (payload.template_id) body.append('template_id', String(payload.template_id));
+        data = await api('api/import/html', { method: 'POST', body });
+      } else if (importFilePath) {
+        data = await api('api/import/html', {
+          method: 'POST',
+          body: JSON.stringify({ ...payload, path: importFilePath }),
+        });
+      } else {
+        showStatus(toast, 'Choose an HTML file to import', true);
+        return;
+      }
+      document.getElementById('modal-import').close();
+      await Promise.all([loadTypes(), loadTemplates(), loadPages()]);
+      if (data.page?.id) {
+        switchWorkspace('studio');
+        await openPage(data.page.id);
+      } else {
+        switchWorkspace('library');
+        renderLibrary();
+      }
+      const copied = data.media?.length ? `, ${data.media.length} assets` : '';
+      showStatus(toast, `Imported${copied}`);
+    } catch (err) {
+      showStatus(toast, err.message, true);
+    }
   });
 }
 

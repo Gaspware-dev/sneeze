@@ -32,7 +32,8 @@ async function loadDir(path) {
   selectedPath = data.valid ? data.path : null;
   const preview = document.getElementById('dir-html-preview');
   if (data.html_files?.length) {
-    preview.textContent = `Existing HTML (may be overwritten on publish): ${data.html_files.slice(0, 5).join(', ')}${data.html_files.length > 5 ? '…' : ''}`;
+    const names = data.html_files.map((f) => (typeof f === 'string' ? f : f.name));
+    preview.textContent = `Existing HTML (may be overwritten on publish): ${names.slice(0, 5).join(', ')}${names.length > 5 ? '…' : ''}`;
   } else if (data.valid) {
     preview.textContent = 'Folder is writable. Pages will be written here when you publish.';
   } else {

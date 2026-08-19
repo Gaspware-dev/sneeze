@@ -40,8 +40,9 @@ Drop-in install is unchanged: copy the `sneeze/` folder next to the site, run se
   - **Blocks** — outline, reorder, add from palette, nested slots (e.g. columns).
   - **Write** — schema-driven fields for the selected block (text, rich text, image, URL, …).
   - **Code** — HTML / CSS / JS for the selected block type, or the page template / page CSS.
-- **Library** — create and edit templates and block types (stored in DB).
+- **Library** — create and edit templates and block types (stored in DB); **import an existing HTML file** into a template + HTML block.
 - **Design** — tokens (compiled to `:root` CSS variables), TypeScript/Tailwind toolchain (`tailwind.config.ts`), global stylesheets, global scripts.
+- **Media** — studio library; files stay in Sneeze until publish.
 - **CMS** — headless sources fetched **in the admin**, cached in SQLite, never at visitor request time.
 
 ---
@@ -61,7 +62,7 @@ All creative artifacts live in SQLite (`data/sneeze.db`).
 - **cms_sources** / **cms_entries** — adapter config + cached payloads.
 - Existing **users**, **media**, **audit_log**, **login_attempts**.
 
-Filesystem (site root) is an **output** directory, plus `uploads/` for binary media. Media metadata stays in SQLite; files stay on disk because inlining binaries into HTML is the wrong default.
+Filesystem: published HTML lands in the site root. Binary media is uploaded into **`sneeze/data/uploads`** (studio-only). On publish, files actually used on the page are copied into the configurable site **asset folder** (`uploads/` by default). Metadata stays in SQLite.
 
 ---
 
@@ -123,13 +124,14 @@ Later adapters (Contentful, Sanity, WordPress REST) implement the same `CmsAdapt
 - Split studio with live preview
 - Block / template library in DB
 - Design tokens + global CSS/JS
+- Import an existing HTML file into a template + HTML block
+- Studio vs published media folders (draft uploads stay in `sneeze/data/uploads` until publish)
 - HTTP JSON CMS sync + cache
 - Setup writes to a **writable** folder (HTML files optional; they are generated)
 
 **Next**
 
 - Drag from preview, inline text editing in the iframe
-- Import an existing HTML file into a template + HTML block
 - Revision browser / rollback
 - More CMS adapters and field mapping UI polish
 

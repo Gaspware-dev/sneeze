@@ -49,6 +49,7 @@ class Compiler
         $assets = $this->compileLanguages($html, $assets);
 
         $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
+        $html = MediaStore::applyToDocument($html, $preview, (string) ($page['slug'] ?? 'index'));
 
         if ($preview) {
             $html = $this->injectPreviewChrome($html);
@@ -68,6 +69,7 @@ class Compiler
         $assets = $this->collectAssets($template, $blocks, $page);
         $assets = $this->compileLanguages($html, $assets);
         $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
+        $html = MediaStore::applyToDocument($html, $preview, (string) ($page['slug'] ?? 'index'));
         if ($preview) {
             $html = $this->injectPreviewChrome($html);
         }

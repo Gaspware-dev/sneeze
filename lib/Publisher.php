@@ -78,7 +78,7 @@ class Publisher
         return $resolved;
     }
 
-    public function relativeUrlTo(string $fromFile, string $toPath): string
+    public static function relativeUrlTo(string $fromFile, string $toPath): string
     {
         $fromDir = str_replace('\\', '/', dirname($fromFile));
         if ($fromDir === '.') {

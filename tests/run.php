@@ -92,6 +92,38 @@ expectContains('tw config to cjs', $cfgJs, 'module.exports');
 expect('tw config no import type', str_contains($cfgJs, 'import type'), false);
 expect('tw config no satisfies', str_contains($cfgJs, 'satisfies'), false);
 
+expect('asset folder sanitized', Config::sanitizeUploadDir('assets/img', false), 'assets/img');
+expect('asset folder rejects traversal', Config::sanitizeUploadDir('../etc', false), 'uploads');
+
+$doc = <<<'HTML'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Landing</title>
+  <meta name="description" content="Old site">
+  <style>h1 { color: red; }</style>
+</head>
+<body>
+  <header>Nav</header>
+  <main class="content"><h1>Hello imported</h1></main>
+  <footer>Foot</footer>
+</body>
+</html>
+HTML;
+$parsed = (new HtmlImporter())->parse($doc);
+expect('import is document', $parsed['is_document'], true);
+expect('import title', $parsed['title'], 'Landing');
+expect('import description', $parsed['description'], 'Old site');
+expectContains('import slot', $parsed['template_html'], '{{slot:content}}');
+expectContains('import title token', $parsed['template_html'], '{{page.seo_title}}');
+expectContains('import content', $parsed['content'], 'Hello imported');
+expect('import content not in chrome', str_contains($parsed['template_html'], 'Hello imported'), false);
+expectContains('import css extracted', $parsed['css'], 'color: red');
+$frag = (new HtmlImporter())->parse('<section class="hero">Fragment</section>');
+expect('fragment not document', $frag['is_document'], false);
+expectContains('fragment body', $frag['content'], 'Fragment');
+
 Config::init($installDir);
 Database::connect(Config::dataDir());
 
@@ -150,6 +182,34 @@ $tpl = TemplateRepository::get((int) $home['template_id']);
 $tpl['html'] = str_replace('<main class="site-main">', '<main class="site-main flex p-4 bg-cream">', $tpl['html']);
 $withTw = (new Compiler())->compilePage((int) $home['id'], false, ['template' => $tpl]);
 expectContains('tailwind in publish', $withTw, 'display:flex');
+
+$imported = (new HtmlImporter())->import($doc, ['name' => 'Landing']);
+expect('import page created', $imported['page']['title'] ?? null, 'Landing');
+expect('import slug not index', ($imported['page']['slug'] ?? 'index') !== 'index', true);
+expectContains('import saved content', json_encode($imported['page']['blocks'] ?? []), 'Hello imported');
+expectContains('import template slot', $imported['template']['html'] ?? '', '{{slot:content}}');
+
+$png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==');
+$pngPath = $installDir . '/dot.png';
+file_put_contents($pngPath, $png);
+Config::set('upload_dir', 'assets');
+$media = (new MediaStore())->ingest($pngPath, 'dot.png', 0);
+expect('media draft exists', is_file(MediaStore::draftAbs($media['storage_key'])), true);
+expect('media not public yet', is_file(MediaStore::publishedAbs($media['storage_key'])), false);
+expectContains('media public path', $media['path'], 'assets/');
+
+$mediaTpl = TemplateRepository::get((int) $home['template_id']);
+$mediaTpl['html'] = str_replace(
+    '{{slot:content}}',
+    '<img src="' . $media['path'] . '" alt="dot">{{slot:content}}',
+    $mediaTpl['html']
+);
+$mediaPreview = (new Compiler())->compilePage((int) $home['id'], true, ['template' => $mediaTpl]);
+expectContains('preview uses studio media', $mediaPreview, 'api/media/file/' . $media['id']);
+$mediaPublish = (new Compiler())->compilePage((int) $home['id'], false, ['template' => $mediaTpl]);
+expectContains('publish uses site assets', $mediaPublish, $media['path']);
+expect('publish copied asset', is_file(MediaStore::publishedAbs($media['storage_key'])), true);
+expect('publish has no studio url', str_contains($mediaPublish, 'api/media/file/'), false);
 
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);
