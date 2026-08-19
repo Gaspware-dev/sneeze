@@ -422,6 +422,16 @@ body.studio-app {
   gap: 0.35rem;
 }
 
-.image-field input {
-  flex: 1;
+.toolchain-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  font-size: 0.9375rem;
+}
+
+.code-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.45;
 }

@@ -190,6 +190,7 @@ class Api
                 'tokens' => DesignRepository::tokens(),
                 'stylesheets' => DesignRepository::stylesheets(),
                 'scripts' => DesignRepository::scripts(),
+                'toolchain' => ToolchainRepository::settings(),
             ]);
         }
 
@@ -198,6 +199,12 @@ class Api
             Auth::requireAdmin();
             $body = self::jsonBody();
             Response::json(['tokens' => DesignRepository::saveTokens($body['tokens'] ?? $body)]);
+        }
+
+        if ($uri === '/api/design/toolchain' && $method === 'PUT') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            Response::json(['toolchain' => ToolchainRepository::save(self::jsonBody())]);
         }
 
         if ($uri === '/api/design/stylesheets' && $method === 'POST') {

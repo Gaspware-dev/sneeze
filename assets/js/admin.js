@@ -406,7 +406,11 @@ function renderWrite() {
 function renderCode() {
   const wrap = document.getElementById('code-wrap');
   const target = document.getElementById('code-target').value;
-  const mode = target.endsWith('css') ? 'css' : target.endsWith('js') ? 'javascript' : 'htmlmixed';
+  const mode = target.endsWith('css')
+    ? 'css'
+    : target.endsWith('js')
+      ? { name: 'javascript', typescript: true }
+      : 'htmlmixed';
   const value = codeValue(target);
   if (!state.codeEditor) {
     state.codeEditor = window.CodeMirror(wrap, {
@@ -434,6 +438,7 @@ function codeValue(target) {
     case 'block-js': return node?.block_type?.js || '';
     case 'template-html': return template?.html || '';
     case 'template-css': return template?.css || '';
+    case 'template-js': return template?.js || '';
     case 'page-css': return state.page?.custom_css || '';
     case 'page-js': return state.page?.custom_js || '';
     default: return '';
@@ -717,6 +722,19 @@ async function loadDesign() {
   };
   renderAssetEditors('stylesheet-list', state.design.stylesheets, 'css', 'stylesheet');
   renderAssetEditors('script-list', state.design.scripts, 'js', 'script');
+  const tool = state.design.toolchain || {};
+  const tsEl = document.getElementById('ts-enabled');
+  const twEl = document.getElementById('tw-enabled');
+  const cfgEl = document.getElementById('tw-config');
+  if (tsEl) tsEl.checked = tool.typescript !== false;
+  if (twEl) twEl.checked = tool.tailwind !== false;
+  if (cfgEl) cfgEl.value = tool.tailwind_config_ts || '';
+  const engines = document.getElementById('toolchain-engines');
+  if (engines) {
+    const es = tool.engines?.esbuild ? 'esbuild' : 'built-in TypeScript';
+    const tw = tool.engines?.tailwindcss ? 'Tailwind CLI' : 'built-in Tailwind';
+    engines.textContent = `Compilers: ${es}, ${tw}.`;
+  }
 }
 
 function renderAssetEditors(containerId, items, field, kind) {
@@ -743,7 +761,25 @@ function renderAssetEditors(containerId, items, field, kind) {
   });
 }
 
-function bindDesign() {}
+function bindDesign() {
+  document.getElementById('btn-save-toolchain')?.addEventListener('click', async () => {
+    try {
+      const data = await api('api/design/toolchain', {
+        method: 'PUT',
+        body: JSON.stringify({
+          typescript: document.getElementById('ts-enabled').checked,
+          tailwind: document.getElementById('tw-enabled').checked,
+          tailwind_config_ts: document.getElementById('tw-config').value,
+        }),
+      });
+      state.design.toolchain = data.toolchain;
+      showStatus(toast, 'Toolchain saved');
+      schedulePreview();
+    } catch (e) {
+      showStatus(toast, e.message, true);
+    }
+  });
+}
 
 function bindMedia() {
   document.getElementById('media-upload').addEventListener('change', async (e) => {

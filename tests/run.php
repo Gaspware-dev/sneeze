@@ -67,6 +67,31 @@ expect('css strips comments', str_contains($css, '/*'), false);
 $js = Minifier::js("/* a */\nfunction hi ( name ) {\n  return name;\n}\n");
 expect('js minify', $js, 'function hi(name){return name;}');
 
+$ts = TypeScriptCompiler::stripTypes('const greet = (name: string): string => `hi ${name}`;');
+expectContains('ts strips param types', $ts, '(name)');
+expect('ts strips annotations', str_contains($ts, ': string'), false);
+$tw = TailwindCompiler::viaPhp('', '<div class="flex items-center p-4 bg-brand md:p-8 hover:opacity-80"></div>', [
+    'tokens' => ['color' => ['brand' => '#d04c4c']],
+]);
+expectContains('tw flex', $tw, 'display:flex');
+expectContains('tw padding', $tw, 'padding:1rem');
+expectContains('tw token color', $tw, '--color-brand');
+expectContains('tw breakpoint', $tw, '@media (min-width:768px)');
+expectContains('tw hover', $tw, ':hover');
+$apply = TailwindCompiler::viaPhp('.btn{@apply flex items-center;}', '', [
+    'tokens' => ['color' => ['brand' => '#d04c4c']],
+]);
+expectContains('tw apply', $apply, 'display:flex');
+$fromConfig = TailwindCompiler::viaPhp('', '<div class="bg-extra"></div>', [
+    'tokens' => ['color' => ['brand' => '#d04c4c']],
+    'tailwind_config_ts' => 'export default { theme: { extend: { colors: { extra: "#111111" } } } };',
+]);
+expectContains('tw config.ts color', $fromConfig, '#111111');
+$cfgJs = TailwindCompiler::configToCjs(ToolchainRepository::defaultConfigTs(['color' => ['brand' => '#d04c4c']]));
+expectContains('tw config to cjs', $cfgJs, 'module.exports');
+expect('tw config no import type', str_contains($cfgJs, 'import type'), false);
+expect('tw config no satisfies', str_contains($cfgJs, 'satisfies'), false);
+
 Config::init($installDir);
 Database::connect(Config::dataDir());
 
@@ -114,11 +139,17 @@ expectContains('published minified', $written, ':root{');
 expect('published no script', str_contains($written, '<script'), false);
 
 $withJs = (new Compiler())->compilePage((int) $home['id'], false, [
-    'custom_js' => "console.log('ok');\n",
+    'custom_js' => "const greet = (name: string): string => `ok`;\nconsole.log(greet('a'));\n",
 ]);
 expectContains('js before body end', $withJs, "</script>\n</body>");
 preg_match('/<head[\s\S]*?<\/head>/i', $withJs, $headMatch);
 expect('js not in head', str_contains(strtolower($headMatch[0] ?? ''), '<script'), false);
+expect('ts compiled away', str_contains($withJs, ': string'), false);
+
+$tpl = TemplateRepository::get((int) $home['template_id']);
+$tpl['html'] = str_replace('<main class="site-main">', '<main class="site-main flex p-4 bg-cream">', $tpl['html']);
+$withTw = (new Compiler())->compilePage((int) $home['id'], false, ['template' => $tpl]);
+expectContains('tailwind in publish', $withTw, 'display:flex');
 
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);

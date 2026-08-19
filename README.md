@@ -103,7 +103,8 @@ return true;
 - **Media library** — uploads to `{site}/uploads/` (binaries stay on disk)
 - **CMS cache** — fetch JSON from a headless CMS in the admin; visitors never call it
 - **Users** — admin and editor roles
-- **Design** — admin UI styled to match vestbykorps.no tokens
+- **TypeScript** — page/block/global scripts compile to JS on preview and publish
+- **Tailwind CSS** — utility classes in HTML (and `@apply` in CSS) compile against `tailwind.config.ts` and design tokens
 
 ## Publish pipeline
 
@@ -112,8 +113,9 @@ On **Publish**, Sneeze concatenates design tokens, global CSS/JS, template CSS/J
 - One minified `<style>` in `<head>` (only CSS for blocks actually on the page)
 - One minified `<script>` at the end of `<body>` (inline scripts cannot use `defer` without `src`)
 - Markup normalized so the file can pass [validator.w3.org](https://validator.w3.org/)
+- TypeScript compiled to JS; Tailwind utilities generated from the page’s classes
 
-Preview uses the same compiler without minifying, plus selection chrome.
+Preview uses the same compiler without minifying, plus selection chrome. Optional: install `esbuild` and `tailwindcss` on the server PATH (or in `sneeze/node_modules`) for the official compilers.
 
 ## Security
 

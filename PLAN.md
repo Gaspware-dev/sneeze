@@ -41,7 +41,7 @@ Drop-in install is unchanged: copy the `sneeze/` folder next to the site, run se
   - **Write** — schema-driven fields for the selected block (text, rich text, image, URL, …).
   - **Code** — HTML / CSS / JS for the selected block type, or the page template / page CSS.
 - **Library** — create and edit templates and block types (stored in DB).
-- **Design** — tokens (compiled to `:root` CSS variables), global stylesheets, global scripts.
+- **Design** — tokens (compiled to `:root` CSS variables), TypeScript/Tailwind toolchain (`tailwind.config.ts`), global stylesheets, global scripts.
 - **CMS** — headless sources fetched **in the admin**, cached in SQLite, never at visitor request time.
 
 ---
@@ -54,8 +54,9 @@ All creative artifacts live in SQLite (`data/sneeze.db`).
 - **block_types** — reusable definitions: JSON field schema, HTML snippet, optional CSS/JS, slots for children.
 - **pages** — title, slug, template, SEO, page-level CSS/JS, draft/published.
 - **page_blocks** — instances on a page: type, parent, slot, sort order, JSON field data; optional CMS binding.
-- **stylesheets** / **scripts** — global assets concatenated at compile time.
+- **stylesheets** / **scripts** — global assets concatenated at compile time. Scripts compile as TypeScript.
 - **design_tokens** — JSON map flattened to CSS custom properties.
+- **toolchain** — TypeScript and Tailwind toggles plus stored `tailwind.config.ts` (theme colors also come from design tokens).
 - **page_revisions** — HTML snapshot on each publish.
 - **cms_sources** / **cms_entries** — adapter config + cached payloads.
 - Existing **users**, **media**, **audit_log**, **login_attempts**.
@@ -72,10 +73,12 @@ On preview and on publish, `Compiler` builds one document:
 2. Render each block: interpolate fields into the type’s HTML; replace `{{slot:name}}` with children.
 3. Concatenate CSS in order: design tokens → global stylesheets → template CSS → CSS of used block types → page CSS.
 4. Concatenate JS in order: global head scripts → global footer scripts → template JS → JS of used block types → page JS.
-5. Inject **one** minified `<style>` at the end of `<head>` (render-blocking CSS is correct for inlined critical styles; unused block-type CSS is omitted).
-6. Inject **one** minified `<script>` immediately before `</body>`. Inline scripts cannot use `defer`/`async` (invalid without `src`), so they never go in `<head>` — including scripts marked “head”, which still run first in the footer bundle.
-7. Normalize markup for [the W3C HTML checker](https://validator.w3.org/): strip empty `class`/`id`/`style`, ensure `alt` on images, require `<!DOCTYPE html>`, drop empty style/script tags.
-8. **Publish** writes `{slug}.html` (`index` → `index.html`) into the configured site root, atomically, with a backup of the previous file.
+5. **TypeScript:** compile concatenated JS (`esbuild` when present, otherwise a built-in type stripper).
+6. **Tailwind:** scan the rendered HTML (and `@apply` in CSS) and emit used utilities. Theme colors/fonts come from design tokens and `tailwind.config.ts`. Uses the Tailwind CLI when installed; otherwise a built-in engine.
+7. Inject **one** minified `<style>` at the end of `<head>` (render-blocking CSS is correct for inlined critical styles; unused block-type CSS is omitted).
+8. Inject **one** minified `<script>` immediately before `</body>`. Inline scripts cannot use `defer`/`async` (invalid without `src`), so they never go in `<head>` — including scripts marked “head”, which still run first in the footer bundle.
+9. Normalize markup for [the W3C HTML checker](https://validator.w3.org/): strip empty `class`/`id`/`style`, ensure `alt` on images, require `<!DOCTYPE html>`, drop empty style/script tags.
+10. **Publish** writes `{slug}.html` (`index` → `index.html`) into the configured site root, atomically, with a backup of the previous file.
 
 Preview skips minification so the iframe stays readable; published files are minified.
 

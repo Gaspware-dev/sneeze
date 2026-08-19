@@ -46,6 +46,7 @@ class Compiler
 
         $html = $this->interpolator->render($template['html'], $context);
         $assets = $this->collectAssets($template, $blocks, $page);
+        $assets = $this->compileLanguages($html, $assets);
 
         $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
 
@@ -65,6 +66,7 @@ class Compiler
         ];
         $html = $this->interpolator->render($template['html'], $context);
         $assets = $this->collectAssets($template, $blocks, $page);
+        $assets = $this->compileLanguages($html, $assets);
         $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
         if ($preview) {
             $html = $this->injectPreviewChrome($html);
@@ -309,6 +311,23 @@ class Compiler
             'jsHead' => implode("\n\n", $jsHead),
             'jsFoot' => implode("\n\n", $jsFoot),
         ];
+    }
+
+    /**
+     * @param array{css: string, jsHead: string, jsFoot: string} $assets
+     * @return array{css: string, jsHead: string, jsFoot: string}
+     */
+    private function compileLanguages(string $html, array $assets): array
+    {
+        $tool = ToolchainRepository::settings();
+        if (!empty($tool['typescript'])) {
+            $assets['jsHead'] = TypeScriptCompiler::compile($assets['jsHead']);
+            $assets['jsFoot'] = TypeScriptCompiler::compile($assets['jsFoot']);
+        }
+        if (!empty($tool['tailwind'])) {
+            $assets['css'] = TailwindCompiler::compile($assets['css'], $html, $tool);
+        }
+        return $assets;
     }
 
     private function inject(string $html, string $css, string $jsHead, string $jsFoot, bool $preview): string

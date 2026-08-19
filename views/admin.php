@@ -111,11 +111,12 @@ $user = Auth::user();
           <select id="code-target">
             <option value="block-html">Block HTML</option>
             <option value="block-css">Block CSS</option>
-            <option value="block-js">Block JS</option>
+            <option value="block-js">Block TypeScript</option>
             <option value="template-html">Template HTML</option>
             <option value="template-css">Template CSS</option>
+            <option value="template-js">Template TypeScript</option>
             <option value="page-css">Page CSS</option>
-            <option value="page-js">Page JS</option>
+            <option value="page-js">Page TypeScript</option>
           </select>
           <button type="button" class="btn btn--ghost btn--sm admin-only hidden" id="btn-save-code">Save definition</button>
         </div>
@@ -152,8 +153,22 @@ $user = Auth::user();
   <div class="workspace workspace--scroll" id="workspace-design">
     <div class="library-grid">
       <section class="card card--flat">
+        <h3>TypeScript &amp; Tailwind</h3>
+        <p class="muted">Scripts are compiled as TypeScript. Tailwind scans published HTML and emits only used utilities. Prefer <code>esbuild</code> / <code>tailwindcss</code> on PATH; built-in compilers are used otherwise.</p>
+        <label class="toolchain-check"><input type="checkbox" id="ts-enabled" checked> Compile TypeScript</label>
+        <label class="toolchain-check"><input type="checkbox" id="tw-enabled" checked> Compile Tailwind CSS</label>
+        <p class="muted" id="toolchain-engines"></p>
+        <div class="contact-form__field">
+          <label for="tw-config">tailwind.config.ts</label>
+          <textarea id="tw-config" rows="16" class="code-textarea" spellcheck="false"></textarea>
+        </div>
+        <div class="contact-form__actions">
+          <button type="button" class="btn btn--primary" id="btn-save-toolchain">Save toolchain</button>
+        </div>
+      </section>
+      <section class="card card--flat">
         <h3>Design tokens</h3>
-        <p class="muted">Flattened to CSS variables at publish time (<code>--color-brand</code>, <code>--font-body</code>, …).</p>
+        <p class="muted">Flattened to CSS variables at publish time (<code>--color-brand</code>, <code>--font-body</code>, …). Tailwind color names match these tokens (<code>bg-brand</code>, <code>text-navy</code>).</p>
         <div id="token-fields"></div>
         <div class="contact-form__actions">
           <button type="button" class="btn btn--primary" id="btn-save-tokens">Save tokens</button>

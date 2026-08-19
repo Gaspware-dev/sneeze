@@ -215,12 +215,14 @@ CREATE TABLE IF NOT EXISTS cms_entries (
 )
 SQL);
 
-        $pdo->exec('PRAGMA user_version = 2');
+        $pdo->exec('PRAGMA user_version = 3');
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
         if ($count === 0) {
             Seed::run($pdo);
         }
+
+        ToolchainRepository::ensure();
     }
 
     public static function pdo(): PDO
