@@ -59,7 +59,7 @@ class PathBrowser
             'directories' => $dirs,
             'html_files' => $htmlFiles,
             'writable' => is_writable($target),
-            'valid' => count($htmlFiles) > 0 || $this->hasHtmlRecursive($target),
+            'valid' => is_writable($target),
         ];
     }
 
@@ -73,15 +73,16 @@ class PathBrowser
             Response::error('Directory is not readable');
         }
 
-        $htmlCount = $this->countHtmlFiles($resolved);
-        if ($htmlCount === 0) {
-            Response::error('No HTML files found in this directory');
+        if (!is_writable($resolved)) {
+            Response::error('Directory is not writable');
         }
+
+        $htmlCount = $this->countHtmlFiles($resolved);
 
         return [
             'path' => $resolved,
             'html_count' => $htmlCount,
-            'writable' => is_writable($resolved),
+            'writable' => true,
         ];
     }
 

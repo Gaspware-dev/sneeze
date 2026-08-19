@@ -1,37 +1,37 @@
 ![image](https://github.com/andreherberth/sneeze/blob/main/assets/img/logo.png)
-# Sneeze — Drop-in HTML Admin Panel
+# Sneeze — Drop-in static site studio
 
-A self-contained PHP + SQLite subfolder you copy into any existing flat-file HTML website. The live site keeps working unchanged; Sneeze only provides authenticated editing, backups, media uploads, and preview.
+A self-contained PHP + SQLite folder you copy into any existing website. Sneeze is the **source of truth** for templates, blocks, CSS, and JavaScript. The public site stays a set of ordinary HTML files: nothing is compiled on visitor request.
+
+See [PLAN.md](PLAN.md) for the redesign architecture.
 
 ## Requirements
 
-- PHP 8.2+ with **PDO SQLite** (`php-sqlite3` / `pdo_sqlite` extension), DOM, JSON
+- PHP 8.2+ with **PDO SQLite** (`php-sqlite3` / `pdo_sqlite`), DOM, JSON, fileinfo
 - Apache with `mod_rewrite` (or nginx equivalent), or PHP built-in server for local dev
-- PHP write access to your HTML files and upload directory
+- PHP write access to the folder where published HTML should land (and the upload directory)
 
 ## Installation
 
-1. Copy the entire `sneeze/` folder into your site (e.g. next to `index.html`):
+1. Copy the entire `sneeze/` folder into your site (e.g. next to where `index.html` will be published):
 
 ```
 yoursite/
-├── index.html
-├── assets/
+├── index.html       ← written on Publish
+├── uploads/
 └── sneeze/          ← copy here
 ```
 
 2. Visit `https://yoursite.example/sneeze/` in your browser.
 
 3. Complete the setup wizard:
-   - **Step 1:** Browse to the folder containing your HTML files (defaults to `../`)
+   - **Step 1:** Choose the writable folder for published HTML (defaults to `../`)
    - **Step 2:** Set the public URL path (usually `/`)
    - **Step 3:** Create your admin account
 
-No changes to your existing site, `.htaccess`, or nginx config are required for a standard install.
+Sneeze seeds a starter template, block types, and two draft pages. **Publish** writes `index.html` / `about.html` into the site folder. Existing HTML with the same names is backed up under `sneeze/data/backups/` first.
 
 ### PHP extensions
-
-Sneeze needs these PHP extensions:
 
 | Extension | Package (Ubuntu/Debian) |
 |-----------|-------------------------|
@@ -39,28 +39,22 @@ Sneeze needs these PHP extensions:
 | `dom` (DOMDocument) | `php8.3-xml` |
 | `fileinfo` | usually bundled with PHP |
 
-Install in one step:
-
 ```bash
 sudo apt install php8.3-sqlite3 php8.3-xml
 php -m | grep -iE 'sqlite|dom'
 ```
 
-Restart your web server or dev server after installing.
-
 Optional: `php8.3-gd` for upload thumbnails.
 
 ## Local development
 
-PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside `index.html` and the `sneeze/` folder), then start the server from there:
+PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside the `sneeze/` folder), then start the server from there:
 
 ```bash
 php -S localhost:8080 router.php
 ```
 
 Then open `http://localhost:8080/sneeze/`.
-
-On Apache/nginx, `.htaccess` in `sneeze/` handles routing automatically.
 
 ### Dev router (`router.php`)
 
@@ -86,8 +80,11 @@ if ($uri !== '/' && is_file($file)) {
 }
 
 if ($uri === '/' || $uri === '') {
-    readfile(__DIR__ . '/index.html');
-    return true;
+    $index = __DIR__ . '/index.html';
+    if (is_file($index)) {
+        readfile($index);
+        return true;
+    }
 }
 
 http_response_code(404);
@@ -98,24 +95,30 @@ return true;
 ## Features
 
 - **Drop-in subfolder** — does not take over site serving
-- **Backup on open** — every file is copied to `sneeze/data/backups/` before editing
-- **Basic View** — edit `<section>` blocks with contenteditable toolbar
-- **Advanced View** — CodeMirror segments for precise HTML editing
-- **Preview** — injects correct `<base href>` so assets load from live URLs
-- **Media library** — uploads to `{site}/uploads/` with relative URL insertion
+- **Studio** — live preview on the left; blocks, writing, and code on the right
+- **Templates & blocks** — stored in SQLite, including HTML/CSS/JS for each definition
+- **Design tokens** — JSON tokens compile to `:root` CSS variables and are inlined on publish
+- **Draft vs publish** — save to the database; publish merges one HTML file per page
+- **Backup on publish** — previous files copied to `sneeze/data/backups/`
+- **Media library** — uploads to `{site}/uploads/` (binaries stay on disk)
+- **CMS cache** — fetch JSON from a headless CMS in the admin; visitors never call it
 - **Users** — admin and editor roles
 - **Design** — admin UI styled to match vestbykorps.no tokens
+
+## Publish pipeline
+
+On **Publish**, Sneeze concatenates design tokens, global CSS/JS, template CSS/JS, CSS/JS of used block types, and page CSS/JS, interpolates block fields into templates, and writes a single `.html` file. Preview uses the same compiler (plus selection chrome).
 
 ## Security
 
 - Session cookies scoped to `/sneeze/`
 - CSRF protection on mutating requests
-- Path traversal blocked on all file operations
+- Path traversal blocked on published-file writes
 - `data/`, `lib/`, `views/` blocked via `.htaccess`
 
 ## Removing Sneeze
 
-Delete the `sneeze/` folder. Your site files (including `uploads/`) remain. Backups inside `sneeze/data/backups/` are removed with the folder.
+Delete the `sneeze/` folder. Your last published HTML files and `uploads/` remain. Drafts, backups, and the database inside `sneeze/data/` are removed with the folder.
 
 ## Apache configuration
 

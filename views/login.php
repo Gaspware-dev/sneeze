@@ -19,7 +19,7 @@
     <div class="auth-card card">
       <img src="<?= htmlspecialchars($assetBase) ?>/img/logo.png" alt="Sneeze" class="brand-logo brand-logo--full" width="200" height="56">
       <h1><?= htmlspecialchars($title) ?></h1>
-      <p class="contact-modal__lead">Sign in to edit your site.</p>
+      <p class="contact-modal__lead">Sign in to the studio.</p>
       <div id="login-status" class="contact-form__status contact-form__status--error hidden" role="alert"></div>
       <form id="login-form">
         <div class="contact-form__field">

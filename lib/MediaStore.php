@@ -15,13 +15,6 @@ class MediaStore
 
     private const MAX_SIZE = 10 * 1024 * 1024;
 
-    private FileManager $files;
-
-    public function __construct()
-    {
-        $this->files = new FileManager();
-    }
-
     public function upload(array $file, int $userId): array
     {
         if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
@@ -67,10 +60,11 @@ class MediaStore
             $userId,
         ]);
 
-        $this->maybeThumbnail($dest, (int) Database::pdo()->lastInsertId(), $mime);
+        $id = (int) Database::pdo()->lastInsertId();
+        $this->maybeThumbnail($dest, $id, $mime);
 
         return $this->formatMedia([
-            'id' => (int) Database::pdo()->lastInsertId(),
+            'id' => $id,
             'filename' => $file['name'] ?? $basename,
             'path' => str_replace('\\', '/', $relativePath),
             'mime' => $mime,

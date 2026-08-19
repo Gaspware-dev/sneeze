@@ -32,11 +32,11 @@ async function loadDir(path) {
   selectedPath = data.valid ? data.path : null;
   const preview = document.getElementById('dir-html-preview');
   if (data.html_files?.length) {
-    preview.textContent = `Found: ${data.html_files.slice(0, 5).join(', ')}${data.html_files.length > 5 ? '…' : ''}`;
+    preview.textContent = `Existing HTML (may be overwritten on publish): ${data.html_files.slice(0, 5).join(', ')}${data.html_files.length > 5 ? '…' : ''}`;
   } else if (data.valid) {
-    preview.textContent = 'HTML files found in subfolders.';
+    preview.textContent = 'Folder is writable. Pages will be written here when you publish.';
   } else {
-    preview.textContent = 'No HTML files in this folder.';
+    preview.textContent = 'Folder is not writable.';
   }
 }
 

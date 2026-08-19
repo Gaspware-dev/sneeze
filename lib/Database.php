@@ -85,6 +85,142 @@ CREATE TABLE IF NOT EXISTS login_attempts (
     locked_until TEXT
 )
 SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    html TEXT NOT NULL DEFAULT '',
+    css TEXT NOT NULL DEFAULT '',
+    js TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS block_types (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL DEFAULT 'content',
+    icon TEXT NOT NULL DEFAULT '■',
+    schema_json TEXT NOT NULL DEFAULT '{}',
+    html TEXT NOT NULL DEFAULT '',
+    css TEXT NOT NULL DEFAULT '',
+    js TEXT NOT NULL DEFAULT '',
+    is_system INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS stylesheets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    css TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS scripts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    js TEXT NOT NULL DEFAULT '',
+    placement TEXT NOT NULL DEFAULT 'footer' CHECK(placement IN ('head', 'footer')),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS design_tokens (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    tokens_json TEXT NOT NULL DEFAULT '{}'
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS cms_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    adapter TEXT NOT NULL DEFAULT 'http_json',
+    config_json TEXT NOT NULL DEFAULT '{}',
+    last_synced_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    template_id INTEGER REFERENCES templates(id),
+    seo_title TEXT,
+    seo_description TEXT NOT NULL DEFAULT '',
+    custom_css TEXT NOT NULL DEFAULT '',
+    custom_js TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
+    published_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS page_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    block_type_id INTEGER NOT NULL REFERENCES block_types(id),
+    parent_id INTEGER REFERENCES page_blocks(id) ON DELETE CASCADE,
+    slot TEXT NOT NULL DEFAULT 'content',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    data_json TEXT NOT NULL DEFAULT '{}',
+    cms_source_id INTEGER REFERENCES cms_sources(id) ON DELETE SET NULL,
+    cms_entry_key TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS page_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    html TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS cms_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL REFERENCES cms_sources(id) ON DELETE CASCADE,
+    external_id TEXT NOT NULL,
+    data_json TEXT NOT NULL DEFAULT '{}',
+    synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source_id, external_id)
+)
+SQL);
+
+        $pdo->exec('PRAGMA user_version = 2');
+
+        $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
+        if ($count === 0) {
+            Seed::run($pdo);
+        }
     }
 
     public static function pdo(): PDO
