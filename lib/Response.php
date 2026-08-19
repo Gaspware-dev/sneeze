@@ -24,4 +24,19 @@ class Response
         echo $content;
         exit;
     }
+
+    public static function file(string $path, string $mime, ?string $filename = null): void
+    {
+        if (!is_file($path)) {
+            self::error('Not found', 404);
+        }
+        header('Content-Type: ' . $mime);
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, max-age=3600');
+        if ($filename !== null && $filename !== '') {
+            header('Content-Disposition: inline; filename="' . str_replace(['"', "\r", "\n"], '', $filename) . '"');
+        }
+        readfile($path);
+        exit;
+    }
 }

@@ -19,7 +19,7 @@
     <div class="auth-card card">
       <img src="<?= htmlspecialchars($assetBase) ?>/img/logo.png" alt="Sneeze" class="brand-logo brand-logo--full" width="200" height="56">
       <h1>Sneeze Setup</h1>
-      <p class="contact-modal__lead">Configure your drop-in admin panel. Your existing site will not be modified until you edit files.</p>
+      <p class="contact-modal__lead">Choose the folder where Sneeze should write published HTML files. Your live site is not changed until you click Publish.</p>
 
       <div class="setup-steps" id="setup-steps">
         <span class="is-active" data-step="1">1. Site folder</span>
@@ -30,7 +30,7 @@
       <div id="setup-status" class="contact-form__status hidden" role="alert"></div>
 
       <div id="step-1">
-        <p class="contact-modal__lead">Browse to the folder containing your HTML files. Default: parent folder (<code>../</code>).</p>
+        <p class="contact-modal__lead">Browse to the site folder (usually the parent of <code>sneeze/</code>). It must be writable. HTML files are created when you publish — they do not need to exist yet.</p>
         <div class="breadcrumb" id="dir-breadcrumb"></div>
         <ul class="dir-list" id="dir-list"></ul>
         <p id="dir-html-preview" class="card__meta"></p>
@@ -50,8 +50,9 @@
           <input type="text" id="site-title" value="Sneeze Admin">
         </div>
         <div class="contact-form__field">
-          <label for="upload-dir">Upload folder (inside site)</label>
+          <label for="upload-dir">Published asset folder (inside site)</label>
           <input type="text" id="upload-dir" value="uploads">
+          <p class="card__meta" style="margin-top:0.5rem">Studio uploads stay in <code>sneeze/data/uploads</code> until you publish. Publish copies used files into this folder.</p>
         </div>
         <div class="contact-form__actions">
           <button type="button" class="btn btn--ghost" id="btn-step2-back">Back</button>

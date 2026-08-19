@@ -94,7 +94,55 @@ class Config
 
     public static function uploadDir(): string
     {
-        return trim((string) self::get('upload_dir', 'uploads'), '/');
+        return self::sanitizeUploadDir((string) self::get('upload_dir', 'uploads'), false);
+    }
+
+    /**
+     * Folder inside the site root where published media is copied.
+     */
+    public static function sanitizeUploadDir(string $dir, bool $strict = true): string
+    {
+        $dir = str_replace('\\', '/', trim($dir));
+        $dir = trim($dir, '/');
+        if ($dir === '') {
+            $dir = 'uploads';
+        }
+        $valid = !str_contains($dir, '..')
+            && !str_starts_with($dir, '/')
+            && preg_match('#^[A-Za-z0-9][A-Za-z0-9/_-]*$#', $dir) === 1;
+        if (!$valid) {
+            if ($strict) {
+                Response::error('Asset folder must be a relative path (letters, numbers, /, -, _)');
+            }
+            return 'uploads';
+        }
+        return $dir;
+    }
+
+    public static function draftUploadDir(): string
+    {
+        return self::dataDir() . '/uploads';
+    }
+
+    public static function sneezeBasePath(): string
+    {
+        $script = $_SERVER['SCRIPT_NAME'] ?? '/sneeze/index.php';
+        $dir = str_replace('\\', '/', dirname($script));
+        if ($dir === '/' || $dir === '.' || $dir === '') {
+            return '';
+        }
+        return rtrim($dir, '/');
+    }
+
+    public static function sneezeOrigin(): string
+    {
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+        if ($host === '') {
+            return '';
+        }
+        $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
+        return ($https ? 'https' : 'http') . '://' . $host;
     }
 
     public static function backupRetention(): int
