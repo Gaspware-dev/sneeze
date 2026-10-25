@@ -16,6 +16,15 @@ const state = {
   codeEditor: null,
   mediaPicker: null,
   design: { tokens: {}, stylesheets: [], scripts: [] },
+  drag: null,
+  previewDrop: null,
+};
+
+const history = {
+  stack: [],
+  index: 0,
+  lock: false,
+  timer: null,
 };
 
 const toast = document.getElementById('global-status');
@@ -44,11 +53,157 @@ function setSaveState(text) {
   document.getElementById('save-state').textContent = text;
 }
 
-function markDirty() {
+function markDirty(opts = {}) {
+  if (history.lock) return;
   state.dirty = true;
   setSaveState('Unsaved');
   schedulePreview();
   scheduleSave();
+  if (opts.history === false) return;
+  clearTimeout(history.timer);
+  if (opts.immediate) pushHistory();
+  else history.timer = setTimeout(pushHistory, 450);
+}
+
+function pageSnapshot() {
+  if (!state.page) return '';
+  return JSON.stringify({
+    title: state.page.title,
+    slug: state.page.slug,
+    seo_description: state.page.seo_description,
+    custom_css: state.page.custom_css,
+    custom_js: state.page.custom_js,
+    template_id: state.page.template_id,
+    blocks: state.page.blocks,
+    selectedId: state.selectedId,
+  });
+}
+
+function pushHistory() {
+  if (history.lock || !state.page) return;
+  const snap = pageSnapshot();
+  if (history.stack[history.index] === snap) return;
+  history.stack = history.stack.slice(0, history.index + 1);
+  history.stack.push(snap);
+  if (history.stack.length > 80) {
+    history.stack.splice(0, history.stack.length - 80);
+  }
+  history.index = history.stack.length - 1;
+  updateHistoryButtons();
+}
+
+function resetHistory() {
+  clearTimeout(history.timer);
+  history.lock = false;
+  history.stack = [pageSnapshot()];
+  history.index = 0;
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  const undoBtn = document.getElementById('btn-undo');
+  const redoBtn = document.getElementById('btn-redo');
+  if (undoBtn) undoBtn.disabled = history.index <= 0;
+  if (redoBtn) redoBtn.disabled = history.index >= history.stack.length - 1;
+}
+
+function applySnapshot(snap) {
+  if (!state.page) return;
+  const data = JSON.parse(snap);
+  history.lock = true;
+  state.page.title = data.title;
+  state.page.slug = data.slug;
+  state.page.seo_description = data.seo_description;
+  state.page.custom_css = data.custom_css;
+  state.page.custom_js = data.custom_js;
+  state.page.template_id = data.template_id;
+  state.page.blocks = data.blocks;
+  state.selectedId = data.selectedId;
+  document.getElementById('page-title').value = data.title || '';
+  document.getElementById('page-slug').value = data.slug || '';
+  document.getElementById('page-seo').value = data.seo_description || '';
+  renderOutline();
+  renderWrite();
+  if (document.getElementById('tab-code')?.classList.contains('is-active')) renderCode();
+  history.lock = false;
+  state.dirty = true;
+  setSaveState('Unsaved');
+  schedulePreview();
+  scheduleSave();
+  updateHistoryButtons();
+}
+
+function undo() {
+  pushHistory();
+  if (history.index <= 0) return;
+  history.index -= 1;
+  applySnapshot(history.stack[history.index]);
+}
+
+function redo() {
+  clearTimeout(history.timer);
+  if (history.index >= history.stack.length - 1) return;
+  history.index += 1;
+  applySnapshot(history.stack[history.index]);
+}
+
+function commitStructure(fn) {
+  clearTimeout(history.timer);
+  pushHistory();
+  const before = pageSnapshot();
+  fn();
+  if (pageSnapshot() === before) return;
+  pushHistory();
+  state.dirty = true;
+  setSaveState('Unsaved');
+  schedulePreview();
+  scheduleSave();
+}
+
+function collectIdMap(oldNodes, newNodes, map) {
+  const count = Math.min(oldNodes.length, newNodes.length);
+  for (let i = 0; i < count; i += 1) {
+    if (String(oldNodes[i].id) !== String(newNodes[i].id)) {
+      map.set(String(oldNodes[i].id), newNodes[i].id);
+    }
+    collectIdMap(oldNodes[i].children || [], newNodes[i].children || [], map);
+  }
+}
+
+function remapTree(nodes, map) {
+  nodes.forEach((node) => {
+    if (map.has(String(node.id))) node.id = map.get(String(node.id));
+    if (node.parent_id != null && map.has(String(node.parent_id))) {
+      node.parent_id = map.get(String(node.parent_id));
+    }
+    remapTree(node.children || [], map);
+  });
+}
+
+function remapSnapshot(snap, map) {
+  const data = JSON.parse(snap);
+  remapTree(data.blocks || [], map);
+  if (data.selectedId != null && map.has(String(data.selectedId))) {
+    data.selectedId = map.get(String(data.selectedId));
+  }
+  return JSON.stringify(data);
+}
+
+function rememberServerIds(oldBlocks) {
+  const map = new Map();
+  collectIdMap(oldBlocks || [], state.page?.blocks || [], map);
+  if (map.size) {
+    history.stack = history.stack.map((snap) => remapSnapshot(snap, map));
+    if (state.selectedId != null && map.has(String(state.selectedId))) {
+      state.selectedId = map.get(String(state.selectedId));
+    }
+  }
+  if (!history.stack.length) {
+    resetHistory();
+    return;
+  }
+  history.stack[history.index] = pageSnapshot();
+  updateHistoryButtons();
 }
 
 function schedulePreview() {
@@ -178,6 +333,13 @@ function bindStudio() {
       const writeBtn = document.querySelector('[data-tab="write"]');
       writeBtn?.click();
     }
+    if (e.data?.type === 'sneeze:hit') {
+      state.previewDrop = {
+        parentId: e.data.parentId || '',
+        slot: e.data.slot || 'content',
+        beforeId: e.data.beforeId || '',
+      };
+    }
   });
 
   ['page-title', 'page-slug', 'page-seo'].forEach((id) => {
@@ -192,6 +354,23 @@ function bindStudio() {
 
   document.getElementById('code-target').addEventListener('change', renderCode);
   document.getElementById('btn-save-code').addEventListener('click', saveCodeTarget);
+  document.getElementById('btn-undo').addEventListener('click', undo);
+  document.getElementById('btn-redo').addEventListener('click', redo);
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key !== 'z' && key !== 'y') return;
+    const target = e.target;
+    if (target?.closest?.('.CodeMirror, input, textarea, select, [contenteditable="true"]')) return;
+    if (key === 'y' || (key === 'z' && e.shiftKey)) {
+      e.preventDefault();
+      redo();
+    } else if (key === 'z') {
+      e.preventDefault();
+      undo();
+    }
+  });
+  bindBuilderDrag();
 }
 
 async function loadPages() {
@@ -237,6 +416,7 @@ async function openPage(id) {
     live.classList.add('hidden');
   }
   setSaveState(state.page.status === 'published' ? 'Published' : 'Draft');
+  resetHistory();
   renderPalette();
   renderOutline();
   renderWrite();
@@ -249,11 +429,53 @@ function renderPalette() {
   state.blockTypes.forEach((type) => {
     const btn = document.createElement('button');
     btn.type = 'button';
+    btn.draggable = true;
+    btn.dataset.typeId = String(type.id);
     btn.textContent = `${type.icon || ''} ${type.name}`.trim();
-    btn.title = `Add ${type.name}`;
+    btn.title = `Drag ${type.name} onto the page, or click to add it`;
     btn.addEventListener('click', () => addBlock(type.id));
     el.appendChild(btn);
   });
+}
+
+function parseParentId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isDescendant(node, id) {
+  return (node.children || []).some((child) => String(child.id) === String(id) || isDescendant(child, id));
+}
+
+function makeNode(typeId, parentId, slot) {
+  const type = state.blockTypes.find((t) => t.id === typeId);
+  if (!type) return null;
+  const node = {
+    id: state.tempId,
+    block_type_id: type.id,
+    block_type: type,
+    parent_id: parentId,
+    slot,
+    data: defaultData(type.schema),
+    children: [],
+    cms_source_id: null,
+    cms_entry_key: null,
+  };
+  state.tempId -= 1;
+  return node;
+}
+
+function targetList(parentId) {
+  if (!state.page) return null;
+  if (parentId === null) {
+    state.page.blocks = state.page.blocks || [];
+    return state.page.blocks;
+  }
+  const parent = findBlock(parentId);
+  if (!parent) return null;
+  parent.children = parent.children || [];
+  return parent.children;
 }
 
 function addBlock(typeId, parent = null, slot = 'content') {
@@ -269,28 +491,18 @@ function addBlock(typeId, parent = null, slot = 'content') {
     }
   }
 
-  const node = {
-    id: state.tempId,
-    block_type_id: type.id,
-    block_type: type,
-    parent_id: parent?.id ?? null,
-    slot,
-    data: defaultData(type.schema),
-    children: [],
-    cms_source_id: null,
-    cms_entry_key: null,
-  };
-  state.tempId -= 1;
-
-  if (parent) {
-    parent.children = parent.children || [];
-    parent.children.push(node);
-  } else {
-    state.page.blocks = state.page.blocks || [];
-    state.page.blocks.push(node);
-  }
-  state.selectedId = node.id;
-  markDirty();
+  commitStructure(() => {
+    const node = makeNode(type.id, parent?.id ?? null, slot);
+    if (!node) return;
+    if (parent) {
+      parent.children = parent.children || [];
+      parent.children.push(node);
+    } else {
+      state.page.blocks = state.page.blocks || [];
+      state.page.blocks.push(node);
+    }
+    state.selectedId = node.id;
+  });
   renderOutline();
   renderWrite();
 }
@@ -298,6 +510,9 @@ function addBlock(typeId, parent = null, slot = 'content') {
 function renderOutline() {
   const root = document.getElementById('block-outline');
   root.innerHTML = '';
+  root.classList.add('outline-slot');
+  root.dataset.slot = 'content';
+  root.dataset.parent = '';
   const label = document.getElementById('selected-label');
   const selected = findBlock(state.selectedId);
   label.textContent = selected ? selected.block_type?.name || '' : '';
@@ -307,8 +522,14 @@ function renderOutline() {
 function outlineItem(node) {
   const wrap = document.createElement('div');
   wrap.className = 'outline-item' + (String(node.id) === String(state.selectedId) ? ' is-selected' : '');
+  wrap.dataset.id = String(node.id);
   const row = document.createElement('div');
   row.className = 'outline-item__row';
+  const handle = document.createElement('span');
+  handle.className = 'drag-handle';
+  handle.draggable = true;
+  handle.title = 'Drag to reorder';
+  handle.textContent = '⋮⋮';
   const pick = document.createElement('button');
   pick.type = 'button';
   pick.className = 'pick';
@@ -330,6 +551,7 @@ function outlineItem(node) {
     });
     ops.appendChild(b);
   });
+  row.appendChild(handle);
   row.appendChild(pick);
   row.appendChild(ops);
   wrap.appendChild(row);
@@ -353,13 +575,175 @@ function outlineItem(node) {
       });
       lab.appendChild(add);
       kids.appendChild(lab);
-      (node.children || []).filter((c) => c.slot === slot).forEach((child) => {
-        kids.appendChild(outlineItem(child));
-      });
+      const slotEl = document.createElement('div');
+      slotEl.className = 'outline-slot';
+      slotEl.dataset.slot = slot;
+      slotEl.dataset.parent = String(node.id);
+      const children = (node.children || []).filter((c) => c.slot === slot);
+      children.forEach((child) => slotEl.appendChild(outlineItem(child)));
+      if (!children.length) {
+        const empty = document.createElement('div');
+        empty.className = 'slot-empty';
+        empty.textContent = 'Drop a block here';
+        slotEl.appendChild(empty);
+      }
+      kids.appendChild(slotEl);
     });
     wrap.appendChild(kids);
   }
   return wrap;
+}
+
+function applyDrop({ parentId, slot, beforeId }) {
+  const drag = state.drag;
+  if (!drag || !state.page) return;
+  const parent = parseParentId(parentId);
+  const list = targetList(parent);
+  if (!list) return;
+  let index = list.length;
+  if (beforeId) {
+    const at = list.findIndex((n) => String(n.id) === String(beforeId));
+    if (at >= 0) index = at;
+  }
+  commitStructure(() => {
+    if (drag.kind === 'type') {
+      const node = makeNode(drag.typeId, parent, slot || 'content');
+      if (!node) return;
+      list.splice(index, 0, node);
+      state.selectedId = node.id;
+      return;
+    }
+    const found = locate(state.page.blocks || [], drag.id);
+    if (!found) return;
+    if (parent !== null && (String(parent) === String(drag.id) || isDescendant(found.node, parent))) return;
+    const sameList = found.list === list;
+    const [node] = found.list.splice(found.index, 1);
+    if (sameList && found.index < index) index -= 1;
+    node.slot = slot || 'content';
+    node.parent_id = parent;
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, node);
+    state.selectedId = node.id;
+  });
+  renderOutline();
+  renderWrite();
+}
+
+function beforeIdFromPoint(container, clientY) {
+  const items = [...container.querySelectorAll(':scope > .outline-item')];
+  for (const item of items) {
+    const rect = item.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) return item.dataset.id || '';
+  }
+  return '';
+}
+
+function notifyPreviewDrag(active) {
+  const frame = document.getElementById('preview-frame');
+  if (!frame) return;
+  frame.style.pointerEvents = active ? 'none' : '';
+  try {
+    frame.contentDocument?.body?.classList.toggle('is-builder-drag', !!active);
+    if (!active) {
+      frame.contentDocument?.querySelectorAll('.is-drop-target, .is-drop-before, .is-drop-after').forEach((el) => {
+        el.classList.remove('is-drop-target', 'is-drop-before', 'is-drop-after');
+      });
+    }
+  } catch (err) {
+    frame.contentWindow?.postMessage({ type: 'sneeze:drag', active: !!active }, '*');
+  }
+}
+
+function hitTestPreview(clientX, clientY) {
+  const frame = document.getElementById('preview-frame');
+  const rect = frame.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  try {
+    const hit = frame.contentDocument?.defaultView?.sneezeHitTest?.(x, y);
+    if (hit) return hit;
+  } catch (err) {
+    /* opaque preview frame */
+  }
+  frame.contentWindow?.postMessage({ type: 'sneeze:hittest', x, y }, '*');
+  return state.previewDrop;
+}
+
+function finishDrag() {
+  document.querySelectorAll('.is-dragging, .is-drop-target').forEach((el) => {
+    el.classList.remove('is-dragging', 'is-drop-target');
+  });
+  notifyPreviewDrag(false);
+  const payload = state.drag;
+  setTimeout(() => {
+    if (state.drag === payload) state.drag = null;
+  }, 50);
+}
+
+function bindBuilderDrag() {
+  const palette = document.getElementById('block-palette');
+  palette.addEventListener('dragstart', (e) => {
+    const btn = e.target.closest('[data-type-id]');
+    if (!btn) return;
+    state.drag = { kind: 'type', typeId: Number(btn.dataset.typeId) };
+    state.previewDrop = { parentId: '', slot: 'content', beforeId: '' };
+    e.dataTransfer.setData('text/plain', `type:${btn.dataset.typeId}`);
+    e.dataTransfer.effectAllowed = 'copy';
+    notifyPreviewDrag(true);
+  });
+  palette.addEventListener('dragend', () => finishDrag());
+
+  const outline = document.getElementById('block-outline');
+  outline.addEventListener('dragstart', (e) => {
+    const handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    const item = handle.closest('.outline-item');
+    if (!item) return;
+    state.drag = { kind: 'block', id: item.dataset.id };
+    state.previewDrop = { parentId: '', slot: 'content', beforeId: '' };
+    e.dataTransfer.setData('text/plain', `block:${item.dataset.id}`);
+    e.dataTransfer.effectAllowed = 'move';
+    item.classList.add('is-dragging');
+    notifyPreviewDrag(true);
+    e.stopPropagation();
+  });
+  outline.addEventListener('dragend', () => finishDrag());
+  outline.addEventListener('dragover', (e) => {
+    if (!state.drag) return;
+    const slot = e.target.closest('.outline-slot');
+    if (!slot) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = state.drag.kind === 'type' ? 'copy' : 'move';
+    outline.querySelectorAll('.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
+    slot.classList.add('is-drop-target');
+  });
+  outline.addEventListener('drop', (e) => {
+    const slot = e.target.closest('.outline-slot');
+    if (!slot || !state.drag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    applyDrop({
+      parentId: slot.dataset.parent || '',
+      slot: slot.dataset.slot || 'content',
+      beforeId: beforeIdFromPoint(slot, e.clientY),
+    });
+    finishDrag();
+  });
+
+  const stage = document.getElementById('preview-stage');
+  stage.addEventListener('dragover', (e) => {
+    if (!state.drag) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = state.drag.kind === 'type' ? 'copy' : 'move';
+    const hit = hitTestPreview(e.clientX, e.clientY);
+    if (hit) state.previewDrop = hit;
+  });
+  stage.addEventListener('drop', (e) => {
+    if (!state.drag) return;
+    e.preventDefault();
+    const hit = hitTestPreview(e.clientX, e.clientY) || state.previewDrop;
+    if (hit) applyDrop(hit);
+    finishDrag();
+  });
 }
 
 function selectBlock(id) {
@@ -375,18 +759,20 @@ function moveBlock(id, dir) {
   if (!found) return;
   const next = found.index + dir;
   if (next < 0 || next >= found.list.length) return;
-  const [item] = found.list.splice(found.index, 1);
-  found.list.splice(next, 0, item);
-  markDirty();
+  commitStructure(() => {
+    const [item] = found.list.splice(found.index, 1);
+    found.list.splice(next, 0, item);
+  });
   renderOutline();
 }
 
 function removeBlock(id) {
   const found = locate(state.page.blocks || [], id);
   if (!found) return;
-  found.list.splice(found.index, 1);
-  if (String(state.selectedId) === String(id)) state.selectedId = null;
-  markDirty();
+  commitStructure(() => {
+    found.list.splice(found.index, 1);
+    if (String(state.selectedId) === String(id)) state.selectedId = null;
+  });
   renderOutline();
   renderWrite();
 }
@@ -540,13 +926,14 @@ async function saveDraft(silent) {
         blocks: state.page.blocks,
       }),
     });
+    const oldBlocks = state.page.blocks;
     const prevSelected = state.selectedId;
     state.page = data.page;
     applyLocalTypes(state.page.blocks || []);
-    if (!findBlock(prevSelected)) {
-      state.selectedId = state.page.blocks?.[0]?.id ?? null;
-    } else {
-      state.selectedId = prevSelected;
+    rememberServerIds(oldBlocks);
+    if (!findBlock(state.selectedId)) {
+      state.selectedId = findBlock(prevSelected) ? prevSelected : (state.page.blocks?.[0]?.id ?? null);
+      if (history.stack.length) history.stack[history.index] = pageSnapshot();
     }
     state.dirty = false;
     setSaveState('Saved');
@@ -1062,6 +1449,7 @@ function bindSettings() {
           site_web_base: document.getElementById('settings-web-base').value,
           upload_dir: document.getElementById('settings-upload-dir').value,
           backup_retention: Number(document.getElementById('settings-retention').value),
+          inline_image_max_bytes: Number(document.getElementById('settings-inline-bytes').value),
           site_title: document.getElementById('settings-title').value,
           site_root: document.getElementById('settings-site-root').value,
         }),
@@ -1127,6 +1515,7 @@ async function loadSettings() {
   document.getElementById('settings-web-base').value = s.site_web_base || '/';
   document.getElementById('settings-upload-dir').value = s.upload_dir || 'uploads';
   document.getElementById('settings-retention').value = s.backup_retention || 20;
+  document.getElementById('settings-inline-bytes').value = s.inline_image_max_bytes ?? 8192;
   document.getElementById('settings-title').value = s.site_title || '';
 }
 

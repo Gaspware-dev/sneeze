@@ -175,32 +175,35 @@ class Compiler
             if (($block['slot'] ?? 'content') !== $slot) {
                 continue;
             }
-            $html .= $this->renderBlock($block, $preview);
+            $html .= $this->renderBlock($block, $preview, null);
         }
-        if ($preview && $html === '') {
-            $html = '<div class="sneeze-dropzone" data-sneeze-slot="' . htmlspecialchars($slot) . '">Add a block</div>';
+        if ($preview) {
+            $label = $html === '' ? 'Add a block' : 'Drop here';
+            $quiet = $html === '' ? '' : ' is-quiet';
+            $html .= '<div class="sneeze-dropzone' . $quiet . '" data-sneeze-slot="' . htmlspecialchars($slot) . '" data-sneeze-parent="">' . $label . '</div>';
         }
         return $html;
     }
 
-    private function renderBlock(array $block, bool $preview): string
+    private function renderBlock(array $block, bool $preview, ?int $parentId = null): string
     {
         $type = $block['block_type'] ?? null;
         if (!$type) {
             return '';
         }
         $children = $block['children'] ?? [];
+        $selfId = (int) ($block['id'] ?? 0);
         $schemaSlots = $type['schema']['slots'] ?? [];
         $slots = [];
         if (is_array($schemaSlots)) {
             foreach ($schemaSlots as $name) {
-                $slots[(string) $name] = $this->renderChildSlot($children, (string) $name, $preview);
+                $slots[(string) $name] = $this->renderChildSlot($children, (string) $name, $preview, $selfId);
             }
         }
         foreach ($children as $child) {
             $name = (string) ($child['slot'] ?? 'content');
             if (!array_key_exists($name, $slots)) {
-                $slots[$name] = $this->renderChildSlot($children, $name, $preview);
+                $slots[$name] = $this->renderChildSlot($children, $name, $preview, $selfId);
             }
         }
 
@@ -215,20 +218,27 @@ class Compiler
 
         $id = (int) ($block['id'] ?? 0);
         $slug = htmlspecialchars((string) ($type['slug'] ?? ''), ENT_QUOTES, 'UTF-8');
-        return '<div class="sneeze-block" data-sneeze-block="' . $id . '" data-sneeze-type="' . $slug . '">' . $inner . '</div>';
+        $slotAttr = htmlspecialchars((string) ($block['slot'] ?? 'content'), ENT_QUOTES, 'UTF-8');
+        $parentAttr = $parentId === null ? '' : (string) $parentId;
+        return '<div class="sneeze-block" data-sneeze-block="' . $id . '" data-sneeze-type="' . $slug
+            . '" data-sneeze-slot="' . $slotAttr . '" data-sneeze-parent="' . htmlspecialchars($parentAttr, ENT_QUOTES, 'UTF-8') . '">'
+            . $inner . '</div>';
     }
 
-    private function renderChildSlot(array $children, string $slot, bool $preview): string
+    private function renderChildSlot(array $children, string $slot, bool $preview, int $parentId): string
     {
         $html = '';
         foreach ($children as $child) {
             if (($child['slot'] ?? 'content') !== $slot) {
                 continue;
             }
-            $html .= $this->renderBlock($child, $preview);
+            $html .= $this->renderBlock($child, $preview, $parentId);
         }
-        if ($preview && $html === '') {
-            $html = '<div class="sneeze-dropzone" data-sneeze-slot="' . htmlspecialchars($slot) . '">Drop in ' . htmlspecialchars($slot) . '</div>';
+        if ($preview) {
+            $label = $html === '' ? 'Drop in ' . $slot : 'Drop here';
+            $quiet = $html === '' ? '' : ' is-quiet';
+            $html .= '<div class="sneeze-dropzone' . $quiet . '" data-sneeze-slot="' . htmlspecialchars($slot)
+                . '" data-sneeze-parent="' . $parentId . '">' . htmlspecialchars($label) . '</div>';
         }
         return $html;
     }
@@ -417,6 +427,11 @@ class Compiler
   background: rgba(208,76,76,.06);
   margin: .35rem 0;
 }
+.sneeze-dropzone.is-quiet { display: none; padding: .55rem; }
+body.is-builder-drag .sneeze-dropzone.is-quiet { display: block; }
+.sneeze-block.is-drop-before { box-shadow: inset 0 3px 0 #d04c4c; }
+.sneeze-block.is-drop-after { box-shadow: inset 0 -3px 0 #d04c4c; }
+.sneeze-dropzone.is-drop-target { outline: 2px solid #d04c4c; }
 </style>
 <script>
 (function () {
@@ -431,6 +446,54 @@ class Compiler
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }
+  function clearMarks() {
+    document.querySelectorAll(".is-drop-target, .is-drop-before, .is-drop-after").forEach(function (el) {
+      el.classList.remove("is-drop-target", "is-drop-before", "is-drop-after");
+    });
+  }
+  function nextSiblingBlock(block) {
+    var parentId = block.getAttribute("data-sneeze-parent") || "";
+    var slot = block.getAttribute("data-sneeze-slot") || "content";
+    var sibs = Array.prototype.filter.call(document.querySelectorAll(".sneeze-block"), function (el) {
+      return (el.getAttribute("data-sneeze-parent") || "") === parentId
+        && (el.getAttribute("data-sneeze-slot") || "content") === slot;
+    });
+    var i = sibs.indexOf(block);
+    return i >= 0 && i < sibs.length - 1 ? sibs[i + 1] : null;
+  }
+  window.sneezeHitTest = function (x, y) {
+    clearMarks();
+    var el = document.elementFromPoint(x, y);
+    if (!el) {
+      return { parentId: "", slot: "content", beforeId: "" };
+    }
+    var zone = el.closest(".sneeze-dropzone");
+    if (zone) {
+      zone.classList.add("is-drop-target");
+      return {
+        parentId: zone.getAttribute("data-sneeze-parent") || "",
+        slot: zone.getAttribute("data-sneeze-slot") || "content",
+        beforeId: ""
+      };
+    }
+    var block = el.closest(".sneeze-block");
+    if (!block) {
+      return { parentId: "", slot: "content", beforeId: "" };
+    }
+    var rect = block.getBoundingClientRect();
+    var after = y > rect.top + rect.height / 2;
+    block.classList.add(after ? "is-drop-after" : "is-drop-before");
+    var beforeId = block.getAttribute("data-sneeze-block") || "";
+    if (after) {
+      var next = nextSiblingBlock(block);
+      beforeId = next ? (next.getAttribute("data-sneeze-block") || "") : "";
+    }
+    return {
+      parentId: block.getAttribute("data-sneeze-parent") || "",
+      slot: block.getAttribute("data-sneeze-slot") || "content",
+      beforeId: beforeId
+    };
+  };
   document.addEventListener("click", function (e) {
     var el = e.target.closest("[data-sneeze-block]");
     if (!el) return;
@@ -441,8 +504,21 @@ class Compiler
     parent.postMessage({ type: "sneeze:select", id: id }, "*");
   }, true);
   window.addEventListener("message", function (e) {
-    if (!e.data || e.data.type !== "sneeze:highlight") return;
-    select(String(e.data.id || ""));
+    if (!e.data) return;
+    if (e.data.type === "sneeze:highlight") select(String(e.data.id || ""));
+    if (e.data.type === "sneeze:drag") {
+      document.body.classList.toggle("is-builder-drag", !!e.data.active);
+      if (!e.data.active) clearMarks();
+    }
+    if (e.data.type === "sneeze:hittest" && window.sneezeHitTest) {
+      var hit = window.sneezeHitTest(Number(e.data.x) || 0, Number(e.data.y) || 0);
+      parent.postMessage({
+        type: "sneeze:hit",
+        parentId: hit.parentId || "",
+        slot: hit.slot || "content",
+        beforeId: hit.beforeId || ""
+      }, "*");
+    }
   });
 })();
 </script>

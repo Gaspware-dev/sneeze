@@ -175,16 +175,53 @@ class MediaStore
             if (!$used) {
                 continue;
             }
-            if (!$preview) {
-                self::copyToSite($row);
+            if ($preview) {
+                $target = self::fileUrl($id);
+            } else {
+                $inline = self::dataUriForRow($row);
+                if ($inline !== null) {
+                    $target = $inline;
+                } else {
+                    self::copyToSite($row);
+                    $target = Publisher::relativeUrlTo(Compiler::outputPath($slug), self::publicPath($key));
+                }
             }
-            $target = $preview
-                ? self::fileUrl($id)
-                : Publisher::relativeUrlTo(Compiler::outputPath($slug), self::publicPath($key));
             $html = self::replaceRefs($html, $id, $key, $target);
         }
 
         return $html;
+    }
+
+    /**
+     * Small images become a data URI. Non-images and anything over the
+     * configured threshold stay as files in the published asset folder.
+     * Returns null when the file should be copied instead of inlined.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function dataUriForRow(array $row): ?string
+    {
+        $mime = strtolower((string) ($row['mime'] ?? ''));
+        if (!str_starts_with($mime, 'image/')) {
+            return null;
+        }
+        $max = Config::inlineImageMaxBytes();
+        if ($max < 1) {
+            return null;
+        }
+        $src = self::draftAbs(self::storageKey((string) ($row['path'] ?? '')));
+        if (!is_file($src)) {
+            return null;
+        }
+        $size = filesize($src);
+        if ($size === false || $size > $max) {
+            return null;
+        }
+        $bytes = file_get_contents($src);
+        if ($bytes === false || strlen($bytes) > $max) {
+            return null;
+        }
+        return 'data:' . $mime . ';base64,' . base64_encode($bytes);
     }
 
     /**

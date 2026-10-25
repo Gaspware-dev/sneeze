@@ -447,6 +447,12 @@ class Api
             if (isset($body['site_title'])) {
                 Config::set('site_title', $body['site_title']);
             }
+            if (isset($body['inline_image_max_bytes'])) {
+                Config::set(
+                    'inline_image_max_bytes',
+                    Config::normalizeInlineImageMaxBytes($body['inline_image_max_bytes'])
+                );
+            }
             Config::save();
             Response::json(['settings' => Config::all()]);
         }
@@ -468,6 +474,7 @@ class Api
             'site_web_base' => Config::siteWebBase(),
             'upload_dir' => Config::uploadDir(),
             'draft_upload_dir' => 'sneeze/data/uploads',
+            'inline_image_max_bytes' => Config::inlineImageMaxBytes(),
         ];
     }
 }
