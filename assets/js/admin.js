@@ -429,7 +429,6 @@ function renderPalette() {
   state.blockTypes.forEach((type) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.draggable = true;
     btn.dataset.typeId = String(type.id);
     btn.textContent = `${type.icon || ''} ${type.name}`.trim();
     btn.title = `Drag ${type.name} onto the page, or click to add it`;
@@ -527,7 +526,6 @@ function outlineItem(node) {
   row.className = 'outline-item__row';
   const handle = document.createElement('span');
   handle.className = 'drag-handle';
-  handle.draggable = true;
   handle.title = 'Drag to reorder';
   handle.textContent = '⋮⋮';
   const pick = document.createElement('button');
@@ -679,71 +677,141 @@ function finishDrag() {
   }, 50);
 }
 
-function bindBuilderDrag() {
-  const palette = document.getElementById('block-palette');
-  palette.addEventListener('dragstart', (e) => {
-    const btn = e.target.closest('[data-type-id]');
-    if (!btn) return;
-    state.drag = { kind: 'type', typeId: Number(btn.dataset.typeId) };
-    state.previewDrop = { parentId: '', slot: 'content', beforeId: '' };
-    e.dataTransfer.setData('text/plain', `type:${btn.dataset.typeId}`);
-    e.dataTransfer.effectAllowed = 'copy';
-    notifyPreviewDrag(true);
-  });
-  palette.addEventListener('dragend', () => finishDrag());
+let pointerDrag = null;
+let suppressNextClick = false;
 
-  const outline = document.getElementById('block-outline');
-  outline.addEventListener('dragstart', (e) => {
-    const handle = e.target.closest('.drag-handle');
-    if (!handle) return;
-    const item = handle.closest('.outline-item');
-    if (!item) return;
-    state.drag = { kind: 'block', id: item.dataset.id };
+function bindBuilderDrag() {
+  document.addEventListener('pointerdown', onBuilderPointerDown);
+  document.addEventListener('pointermove', onBuilderPointerMove);
+  document.addEventListener('pointerup', onBuilderPointerUp);
+  document.addEventListener('pointercancel', onBuilderPointerUp);
+  document.addEventListener('click', (e) => {
+    if (!suppressNextClick) return;
+    suppressNextClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+}
+
+function onBuilderPointerDown(e) {
+  if (e.button !== 0 || pointerDrag) return;
+  const handle = e.target.closest?.('.drag-handle');
+  const chip = !handle ? e.target.closest?.('#block-palette [data-type-id]') : null;
+  if (!handle && !chip) return;
+  const item = handle?.closest('.outline-item');
+  pointerDrag = {
+    pointerId: e.pointerId,
+    kind: handle ? 'block' : 'type',
+    id: item?.dataset.id || '',
+    typeId: chip ? Number(chip.dataset.typeId) : null,
+    label: (handle ? item?.querySelector('.pick')?.textContent : chip?.textContent) || 'Block',
+    startX: e.clientX,
+    startY: e.clientY,
+    active: false,
+  };
+  (handle || chip).setPointerCapture?.(e.pointerId);
+}
+
+function onBuilderPointerMove(e) {
+  if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+  const distance = Math.hypot(e.clientX - pointerDrag.startX, e.clientY - pointerDrag.startY);
+  if (!pointerDrag.active) {
+    if (distance < 5) return;
+    pointerDrag.active = true;
+    state.drag = pointerDrag.kind === 'block'
+      ? { kind: 'block', id: pointerDrag.id }
+      : { kind: 'type', typeId: pointerDrag.typeId };
     state.previewDrop = { parentId: '', slot: 'content', beforeId: '' };
-    e.dataTransfer.setData('text/plain', `block:${item.dataset.id}`);
-    e.dataTransfer.effectAllowed = 'move';
-    item.classList.add('is-dragging');
+    document.querySelectorAll('.outline-item').forEach((el) => {
+      el.classList.toggle('is-dragging', pointerDrag.kind === 'block' && el.dataset.id === String(pointerDrag.id));
+    });
     notifyPreviewDrag(true);
-    e.stopPropagation();
-  });
-  outline.addEventListener('dragend', () => finishDrag());
-  outline.addEventListener('dragover', (e) => {
-    if (!state.drag) return;
-    const slot = e.target.closest('.outline-slot');
-    if (!slot) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = state.drag.kind === 'type' ? 'copy' : 'move';
-    outline.querySelectorAll('.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
-    slot.classList.add('is-drop-target');
-  });
-  outline.addEventListener('drop', (e) => {
-    const slot = e.target.closest('.outline-slot');
-    if (!slot || !state.drag) return;
-    e.preventDefault();
-    e.stopPropagation();
-    applyDrop({
+  }
+  e.preventDefault();
+  moveDragGhost(e.clientX, e.clientY, pointerDrag.label);
+  showDropHint(pointerDropTarget(e.clientX, e.clientY));
+}
+
+function onBuilderPointerUp(e) {
+  if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+  const active = pointerDrag.active;
+  const x = e.clientX;
+  const y = e.clientY;
+  pointerDrag = null;
+  hideDragGhost();
+  if (!active) return;
+  suppressNextClick = true;
+  const hit = pointerDropTarget(x, y);
+  if (hit && state.drag) applyDrop(hit);
+  clearDropHints();
+  finishDrag();
+}
+
+function pointerDropTarget(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const slot = el.closest('.outline-slot');
+  const outline = document.getElementById('block-outline');
+  if (slot && outline?.contains(slot)) {
+    clearPreviewMarks();
+    return {
+      where: 'outline',
       parentId: slot.dataset.parent || '',
       slot: slot.dataset.slot || 'content',
-      beforeId: beforeIdFromPoint(slot, e.clientY),
-    });
-    finishDrag();
-  });
-
+      beforeId: beforeIdFromPoint(slot, y),
+    };
+  }
   const stage = document.getElementById('preview-stage');
-  stage.addEventListener('dragover', (e) => {
-    if (!state.drag) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = state.drag.kind === 'type' ? 'copy' : 'move';
-    const hit = hitTestPreview(e.clientX, e.clientY);
-    if (hit) state.previewDrop = hit;
-  });
-  stage.addEventListener('drop', (e) => {
-    if (!state.drag) return;
-    e.preventDefault();
-    const hit = hitTestPreview(e.clientX, e.clientY) || state.previewDrop;
-    if (hit) applyDrop(hit);
-    finishDrag();
-  });
+  if (stage && stage.contains(el)) {
+    const hit = hitTestPreview(x, y) || { parentId: '', slot: 'content', beforeId: '' };
+    return { ...hit, where: 'preview' };
+  }
+  clearPreviewMarks();
+  return null;
+}
+
+function clearPreviewMarks() {
+  try {
+    document.getElementById('preview-frame')?.contentDocument
+      ?.querySelectorAll('.is-drop-target, .is-drop-before, .is-drop-after')
+      .forEach((node) => node.classList.remove('is-drop-target', 'is-drop-before', 'is-drop-after'));
+  } catch (err) {
+    /* preview frame is not readable */
+  }
+}
+
+function showDropHint(hit) {
+  clearDropHints();
+  if (!hit || hit.where !== 'outline') return;
+  const outline = document.getElementById('block-outline');
+  const parent = hit.parentId || '';
+  const slotName = hit.slot || 'content';
+  const slot = [...outline.querySelectorAll('.outline-slot')].find((el) => (
+    (el.dataset.parent || '') === String(parent) && (el.dataset.slot || 'content') === slotName
+  ));
+  slot?.classList.add('is-drop-target');
+}
+
+function clearDropHints() {
+  document.querySelectorAll('.outline-slot.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
+}
+
+function moveDragGhost(x, y, label) {
+  let ghost = document.getElementById('drag-ghost');
+  if (!ghost) {
+    ghost = document.createElement('div');
+    ghost.id = 'drag-ghost';
+    document.body.appendChild(ghost);
+  }
+  ghost.textContent = String(label).trim();
+  ghost.style.left = `${x + 14}px`;
+  ghost.style.top = `${y + 14}px`;
+  ghost.hidden = false;
+}
+
+function hideDragGhost() {
+  const ghost = document.getElementById('drag-ghost');
+  if (ghost) ghost.hidden = true;
 }
 
 function selectBlock(id) {

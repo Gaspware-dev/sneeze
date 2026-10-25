@@ -281,10 +281,33 @@ body.studio-app {
   cursor: grab;
   color: var(--color-text-muted);
   user-select: none;
+  touch-action: none;
   letter-spacing: -0.14em;
-  font-size: 0.8rem;
-  padding: 0 0.1rem;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  min-height: 1.7rem;
+  border-radius: 6px;
   line-height: 1;
+}
+
+.drag-handle:hover {
+  background: rgba(208, 76, 76, 0.08);
+  color: var(--color-brand-red-deep);
+}
+
+#drag-ghost {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: var(--color-navy);
+  color: var(--color-white);
+  font: 600 0.75rem var(--font-body);
+  box-shadow: var(--shadow-lg);
 }
 
 .drag-handle:active {
