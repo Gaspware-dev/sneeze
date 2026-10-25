@@ -53,6 +53,12 @@ function setSaveState(text) {
   document.getElementById('save-state').textContent = text;
 }
 
+function publishedHref(url) {
+  if (!url) return '#';
+  if (/^[a-z]+:/i.test(url) || url.startsWith('/')) return url;
+  return `/${String(url).replace(/^\.\//, '')}`;
+}
+
 function markDirty(opts = {}) {
   if (history.lock) return;
   state.dirty = true;
@@ -410,7 +416,7 @@ async function openPage(id) {
   document.getElementById('page-seo').value = state.page.seo_description || '';
   const live = document.getElementById('btn-live');
   if (state.page.status === 'published') {
-    live.href = apiUrl(state.page.slug === 'index' ? '../index.html' : `../${state.page.slug}.html`);
+    live.href = publishedHref(state.page.slug === 'index' ? 'index.html' : `${state.page.slug}.html`);
     live.classList.remove('hidden');
   } else {
     live.classList.add('hidden');
@@ -1024,7 +1030,7 @@ async function publishPage() {
     state.page.status = 'published';
     setSaveState('Published');
     const live = document.getElementById('btn-live');
-    live.href = data.url;
+    live.href = publishedHref(data.url);
     live.classList.remove('hidden');
     showStatus(toast, `Published to ${data.path}`);
   } catch (e) {
