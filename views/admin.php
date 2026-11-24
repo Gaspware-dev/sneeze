@@ -101,6 +101,34 @@ $user = Auth::user();
             <label for="page-seo">SEO description</label>
             <textarea id="page-seo" rows="2"></textarea>
           </div>
+          <div class="contact-form__field">
+            <label for="page-header-mode">Header</label>
+            <select id="page-header-mode">
+              <option value="inherit">Sitewide</option>
+              <option value="custom">Custom</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+          <div class="contact-form__field hidden" id="page-header-wrap">
+            <label for="page-header-html">Custom header HTML</label>
+            <textarea id="page-header-html" rows="6" class="code-textarea" spellcheck="false"></textarea>
+          </div>
+          <div class="contact-form__field">
+            <label for="page-footer-mode">Footer</label>
+            <select id="page-footer-mode">
+              <option value="inherit">Sitewide</option>
+              <option value="custom">Custom</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+          <div class="contact-form__field hidden" id="page-footer-wrap">
+            <label for="page-footer-html">Custom footer HTML</label>
+            <textarea id="page-footer-html" rows="5" class="code-textarea" spellcheck="false"></textarea>
+          </div>
+          <div class="contact-form__field">
+            <span class="field-label">Global assets on this page</span>
+            <div id="page-asset-excludes" class="page-asset-excludes muted">Load Design assets to choose exclusions.</div>
+          </div>
         </form>
         <div id="write-fields" class="write-fields">
           <p class="muted">Select a block in the outline or preview.</p>
@@ -179,13 +207,34 @@ $user = Auth::user();
         </div>
       </section>
       <section class="card card--flat">
+        <h3>Site chrome</h3>
+        <p class="muted">Sitewide header and footer injected where templates include <code>&lt;!-- sneeze:header --&gt;</code> / <code>&lt;!-- sneeze:footer --&gt;</code>. Pages can inherit, override, or hide them.</p>
+        <div class="contact-form__field">
+          <label for="chrome-header">Header HTML</label>
+          <textarea id="chrome-header" rows="10" class="code-textarea" spellcheck="false"></textarea>
+        </div>
+        <div class="contact-form__field">
+          <label for="chrome-footer">Footer HTML</label>
+          <textarea id="chrome-footer" rows="8" class="code-textarea" spellcheck="false"></textarea>
+        </div>
+        <div class="contact-form__actions">
+          <button type="button" class="btn btn--primary" id="btn-save-chrome">Save chrome</button>
+        </div>
+      </section>
+      <section class="card card--flat">
         <h3>Global CSS</h3>
-        <p class="muted">Inlined as one minified <code>&lt;style&gt;</code> in <code>&lt;head&gt;</code> on publish. Unused block CSS is omitted.</p>
+        <p class="muted">Inlined as one minified <code>&lt;style&gt;</code> in <code>&lt;head&gt;</code> on publish. Unused block CSS is omitted. Pages can exclude individual sheets.</p>
+        <div class="contact-form__actions" style="margin-bottom:0.75rem">
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-add-stylesheet">Add stylesheet</button>
+        </div>
         <div id="stylesheet-list"></div>
       </section>
       <section class="card card--flat">
         <h3>Global JS</h3>
-        <p class="muted">Inlined as one minified <code>&lt;script&gt;</code> at the end of <code>&lt;body&gt;</code> so it does not block first paint. Empty scripts are not emitted.</p>
+        <p class="muted">Inlined as one minified <code>&lt;script&gt;</code> at the end of <code>&lt;body&gt;</code> so it does not block first paint. Empty scripts are not emitted. Pages can exclude individual scripts.</p>
+        <div class="contact-form__actions" style="margin-bottom:0.75rem">
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-add-script">Add script</button>
+        </div>
         <div id="script-list"></div>
       </section>
     </div>
@@ -280,6 +329,7 @@ $user = Auth::user();
   <div class="workspace workspace--scroll" id="workspace-settings">
     <section class="card card--flat">
       <h3>Settings</h3>
+      <p class="muted" id="settings-version">Sneeze</p>
       <form id="settings-form">
         <div class="contact-form__field">
           <label for="settings-site-root">Publish folder (filesystem)</label>
@@ -309,6 +359,17 @@ $user = Auth::user();
           <button type="button" class="btn btn--ghost" id="btn-publish-all">Publish all pages</button>
         </div>
       </form>
+    </section>
+    <section class="card card--flat" style="margin-top:1.5rem">
+      <h3>Update Sneeze</h3>
+      <p class="muted">Upload the zip from GitHub <strong>Code → Download ZIP</strong>. Runtime data (<code>data/</code>, database, uploads, backups) is preserved. Requires the PHP <code>zip</code> extension.</p>
+      <div class="contact-form__field">
+        <label for="settings-update-zip">Package zip</label>
+        <input type="file" id="settings-update-zip" accept=".zip,application/zip">
+      </div>
+      <div class="contact-form__actions">
+        <button type="button" class="btn btn--primary" id="btn-update-sneeze">Install update</button>
+      </div>
     </section>
   </div>
 

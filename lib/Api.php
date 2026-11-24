@@ -190,8 +190,20 @@ class Api
                 'tokens' => DesignRepository::tokens(),
                 'stylesheets' => DesignRepository::stylesheets(),
                 'scripts' => DesignRepository::scripts(),
+                'chrome' => DesignRepository::chrome(),
                 'toolchain' => ToolchainRepository::settings(),
             ]);
+        }
+
+        if ($uri === '/api/design/chrome' && $method === 'GET') {
+            Auth::requireAdmin();
+            Response::json(['chrome' => DesignRepository::chrome()]);
+        }
+
+        if ($uri === '/api/design/chrome' && $method === 'PUT') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            Response::json(['chrome' => DesignRepository::saveChrome(self::jsonBody())]);
         }
 
         if ($uri === '/api/design/tokens' && $method === 'PUT') {
@@ -419,12 +431,25 @@ class Api
 
         if ($uri === '/api/settings' && $method === 'GET') {
             Auth::requireAdmin();
-            Response::json(['settings' => Config::all()]);
+            $settings = Config::all();
+            $settings['version'] = Version::current();
+            Response::json(['settings' => $settings]);
         }
 
         if ($uri === '/api/settings/browse' && $method === 'GET') {
             Auth::requireAdmin();
             Response::json($pathBrowser->browse($_GET['path'] ?? null));
+        }
+
+        if ($uri === '/api/settings/update' && $method === 'POST') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            if (!isset($_FILES['file'])) {
+                Response::error('file required');
+            }
+            $result = Updater::applyUpload($_FILES['file']);
+            Auth::audit((int) $user['id'], 'update_sneeze', $result['version']);
+            Response::json($result);
         }
 
         if ($uri === '/api/settings' && $method === 'POST') {
@@ -448,7 +473,9 @@ class Api
                 Config::set('site_title', $body['site_title']);
             }
             Config::save();
-            Response::json(['settings' => Config::all()]);
+            $settings = Config::all();
+            $settings['version'] = Version::current();
+            Response::json(['settings' => $settings]);
         }
 
         Response::error('Not found', 404);
@@ -468,6 +495,7 @@ class Api
             'site_web_base' => Config::siteWebBase(),
             'upload_dir' => Config::uploadDir(),
             'draft_upload_dir' => 'sneeze/data/uploads',
+            'version' => Version::current(),
         ];
     }
 }

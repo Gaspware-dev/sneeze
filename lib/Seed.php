@@ -17,6 +17,10 @@ class Seed
         )->execute(['Theme', self::themeCss()]);
 
         $pdo->prepare(
+            'INSERT INTO site_chrome (id, header_html, footer_html, updated_at) VALUES (1, ?, ?, ?)'
+        )->execute([self::defaultHeader(), self::defaultFooter(), $now]);
+
+        $pdo->prepare(
             'INSERT INTO templates (name, slug, html, css, js, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
         )->execute([
             'Base',
@@ -253,6 +257,33 @@ CSS;
 CSS;
     }
 
+    public static function defaultHeader(): string
+    {
+        return <<<'HTML'
+<header class="site-header">
+  <div class="wrap">
+    <a class="site-logo" href="{{site.home_url}}">{{site.title}}</a>
+    <nav class="site-nav">
+      {{#each pages}}
+      <a href="{{url}}"{{#if current}} class="is-current" aria-current="page"{{/if}}>{{title}}</a>
+      {{/each}}
+    </nav>
+  </div>
+</header>
+HTML;
+    }
+
+    public static function defaultFooter(): string
+    {
+        return <<<'HTML'
+<footer class="site-footer">
+  <div class="wrap">
+    <p>© {{site.title}}</p>
+  </div>
+</footer>
+HTML;
+    }
+
     public static function baseTemplate(): string
     {
         return <<<'HTML'
@@ -266,24 +297,11 @@ CSS;
   <!-- sneeze:css -->
 </head>
 <body>
-  <header class="site-header">
-    <div class="wrap">
-      <a class="site-logo" href="{{site.home_url}}">{{site.title}}</a>
-      <nav class="site-nav">
-        {{#each pages}}
-        <a href="{{url}}"{{#if current}} class="is-current" aria-current="page"{{/if}}>{{title}}</a>
-        {{/each}}
-      </nav>
-    </div>
-  </header>
+  <!-- sneeze:header -->
   <main class="site-main">
     {{slot:content}}
   </main>
-  <footer class="site-footer">
-    <div class="wrap">
-      <p>© {{site.title}}</p>
-    </div>
-  </footer>
+  <!-- sneeze:footer -->
   <!-- sneeze:js -->
 </body>
 </html>

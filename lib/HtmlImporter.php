@@ -126,6 +126,7 @@ class HtmlImporter
             }
         }
 
+        $chrome = $this->extractChromeMarkers($dom);
         $this->ensureComments($dom);
         $templateHtml = $this->saveDocument($dom);
 
@@ -145,6 +146,8 @@ class HtmlImporter
             'content' => trim($content),
             'css' => $css,
             'js' => $js,
+            'header_html' => $chrome['header_html'],
+            'footer_html' => $chrome['footer_html'],
             'local_assets' => $localAssets,
         ];
     }
@@ -185,6 +188,12 @@ class HtmlImporter
 
         $template = null;
         if ($createTemplate && $parsed['is_document'] && $parsed['template_html'] !== '') {
+            if (($parsed['header_html'] ?? '') !== '' || ($parsed['footer_html'] ?? '') !== '') {
+                DesignRepository::fillChromeIfEmpty(
+                    (string) ($parsed['header_html'] ?? ''),
+                    (string) ($parsed['footer_html'] ?? '')
+                );
+            }
             $template = TemplateRepository::save([
                 'name' => $name,
                 'slug' => $this->uniqueTemplateSlug($opts['slug'] ?? $parsed['slug'] ?: $name),
@@ -289,6 +298,64 @@ class HtmlImporter
             $body->appendChild($main);
         }
         return $html;
+    }
+
+    /**
+     * Pull <header>/<footer> out of body into site chrome markers.
+     *
+     * @return array{header_html: string, footer_html: string}
+     */
+    private function extractChromeMarkers(DOMDocument $dom): array
+    {
+        $body = $dom->getElementsByTagName('body')->item(0);
+        if (!$body instanceof DOMElement) {
+            return ['header_html' => '', 'footer_html' => ''];
+        }
+
+        $headerHtml = '';
+        $footerHtml = '';
+        $headerNode = null;
+        $footerNode = null;
+        foreach (iterator_to_array($body->childNodes) as $child) {
+            if (!$child instanceof DOMElement) {
+                continue;
+            }
+            $tag = strtolower($child->tagName);
+            if ($tag === 'header' && $headerNode === null) {
+                $headerNode = $child;
+            } elseif ($tag === 'footer' && $footerNode === null) {
+                $footerNode = $child;
+            }
+        }
+
+        if ($headerNode) {
+            $headerHtml = trim($dom->saveHTML($headerNode) ?: '');
+            $marker = $dom->createComment(' sneeze:header ');
+            $body->insertBefore($marker, $headerNode);
+            $body->removeChild($headerNode);
+        } elseif (!str_contains($this->innerHtml($body), 'sneeze:header')) {
+            $main = $dom->getElementsByTagName('main')->item(0);
+            $marker = $dom->createComment(' sneeze:header ');
+            if ($main instanceof DOMElement && $main->parentNode === $body) {
+                $body->insertBefore($marker, $main);
+            } else {
+                $body->insertBefore($marker, $body->firstChild);
+            }
+        }
+
+        if ($footerNode) {
+            $footerHtml = trim($dom->saveHTML($footerNode) ?: '');
+            $marker = $dom->createComment(' sneeze:footer ');
+            $body->insertBefore($marker, $footerNode);
+            $body->removeChild($footerNode);
+        } elseif (!str_contains($this->innerHtml($body), 'sneeze:footer')) {
+            $body->appendChild($dom->createComment(' sneeze:footer '));
+        }
+
+        return [
+            'header_html' => $headerHtml,
+            'footer_html' => $footerHtml,
+        ];
     }
 
     private function ensureComments(DOMDocument $dom): void

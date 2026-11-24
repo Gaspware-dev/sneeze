@@ -39,7 +39,40 @@ class PageRepository
     {
         $row['id'] = (int) $row['id'];
         $row['template_id'] = $row['template_id'] !== null ? (int) $row['template_id'] : null;
+        $row['header_mode'] = self::normalizeMode($row['header_mode'] ?? 'inherit');
+        $row['footer_mode'] = self::normalizeMode($row['footer_mode'] ?? 'inherit');
+        $row['header_html'] = (string) ($row['header_html'] ?? '');
+        $row['footer_html'] = (string) ($row['footer_html'] ?? '');
+        $row['disabled_stylesheet_ids'] = self::idList($row['disabled_stylesheet_ids'] ?? '[]');
+        $row['disabled_script_ids'] = self::idList($row['disabled_script_ids'] ?? '[]');
         return $row;
+    }
+
+    public static function normalizeMode(mixed $mode): string
+    {
+        $mode = (string) $mode;
+        return in_array($mode, ['inherit', 'custom', 'none'], true) ? $mode : 'inherit';
+    }
+
+    /**
+     * @return list<int>
+     */
+    public static function idList(mixed $value): array
+    {
+        if (is_array($value)) {
+            $raw = $value;
+        } else {
+            $decoded = json_decode((string) $value, true);
+            $raw = is_array($decoded) ? $decoded : [];
+        }
+        $ids = [];
+        foreach ($raw as $item) {
+            $id = (int) $item;
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        return array_values(array_unique($ids));
     }
 
     public static function create(array $body): array
@@ -60,8 +93,9 @@ class PageRepository
 
         try {
             Database::pdo()->prepare(
-                'INSERT INTO pages (title, slug, template_id, seo_title, seo_description, custom_css, custom_js)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO pages (title, slug, template_id, seo_title, seo_description, custom_css, custom_js,
+                    header_mode, footer_mode, header_html, footer_html, disabled_stylesheet_ids, disabled_script_ids)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
                 $title,
                 $slug,
@@ -70,6 +104,12 @@ class PageRepository
                 (string) ($body['seo_description'] ?? ''),
                 (string) ($body['custom_css'] ?? ''),
                 (string) ($body['custom_js'] ?? ''),
+                self::normalizeMode($body['header_mode'] ?? 'inherit'),
+                self::normalizeMode($body['footer_mode'] ?? 'inherit'),
+                (string) ($body['header_html'] ?? ''),
+                (string) ($body['footer_html'] ?? ''),
+                Json::encode(self::idList($body['disabled_stylesheet_ids'] ?? [])),
+                Json::encode(self::idList($body['disabled_script_ids'] ?? [])),
             ]);
         } catch (PDOException $e) {
             Response::error('Page slug already exists', 409);
@@ -88,11 +128,30 @@ class PageRepository
         if ($seoTitle === '') {
             $seoTitle = $title;
         }
+        $headerMode = array_key_exists('header_mode', $body)
+            ? self::normalizeMode($body['header_mode'])
+            : $page['header_mode'];
+        $footerMode = array_key_exists('footer_mode', $body)
+            ? self::normalizeMode($body['footer_mode'])
+            : $page['footer_mode'];
+        $headerHtml = array_key_exists('header_html', $body)
+            ? (string) $body['header_html']
+            : $page['header_html'];
+        $footerHtml = array_key_exists('footer_html', $body)
+            ? (string) $body['footer_html']
+            : $page['footer_html'];
+        $disabledSheets = array_key_exists('disabled_stylesheet_ids', $body)
+            ? self::idList($body['disabled_stylesheet_ids'])
+            : $page['disabled_stylesheet_ids'];
+        $disabledScripts = array_key_exists('disabled_script_ids', $body)
+            ? self::idList($body['disabled_script_ids'])
+            : $page['disabled_script_ids'];
 
         try {
             Database::pdo()->prepare(
                 'UPDATE pages SET title = ?, slug = ?, template_id = ?, seo_title = ?, seo_description = ?,
-                    custom_css = ?, custom_js = ?, updated_at = datetime(\'now\')
+                    custom_css = ?, custom_js = ?, header_mode = ?, footer_mode = ?, header_html = ?, footer_html = ?,
+                    disabled_stylesheet_ids = ?, disabled_script_ids = ?, updated_at = datetime(\'now\')
                  WHERE id = ?'
             )->execute([
                 $title,
@@ -102,6 +161,12 @@ class PageRepository
                 (string) ($body['seo_description'] ?? $page['seo_description']),
                 (string) ($body['custom_css'] ?? $page['custom_css']),
                 (string) ($body['custom_js'] ?? $page['custom_js']),
+                $headerMode,
+                $footerMode,
+                $headerHtml,
+                $footerHtml,
+                Json::encode($disabledSheets),
+                Json::encode($disabledScripts),
                 $id,
             ]);
         } catch (PDOException $e) {
