@@ -17,15 +17,10 @@ Database::connect(Config::dataDir());
 Auth::startSession($installDir);
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-$basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
-if ($basePath !== '' && str_starts_with($uri, $basePath)) {
-    $uri = substr($uri, strlen($basePath)) ?: '/';
-}
-$uri = '/' . trim($uri, '/');
-if ($uri !== '/') {
-    $uri = rtrim($uri, '/');
-}
+$uri = Plugins::normalizeUri(
+    $_SERVER['REQUEST_URI'] ?? '/',
+    $_SERVER['SCRIPT_NAME'] ?? ''
+);
 
 if (str_starts_with($uri, '/assets/')) {
     $assetPath = $installDir . $uri;
@@ -44,6 +39,19 @@ if (str_starts_with($uri, '/assets/')) {
         exit;
     }
     http_response_code(404);
+    exit;
+}
+
+if (Config::isSetupComplete()) {
+    Plugins::boot();
+}
+
+if (str_starts_with($uri, '/plugin-assets/')) {
+    if (!Config::isSetupComplete()) {
+        http_response_code(404);
+        exit;
+    }
+    Plugins::serveAsset($uri);
     exit;
 }
 

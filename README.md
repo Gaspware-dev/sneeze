@@ -129,6 +129,15 @@ return true;
 - **Users** — admin and editor roles
 - **TypeScript** — page/block/global scripts compile to JS on preview and publish
 - **Tailwind CSS** — utility classes in HTML (and `@apply` in CSS) compile against `tailwind.config.ts` and design tokens
+- **Plugins** — addons in `data/plugins/{id}` (or a zip from the Plugins workspace). Plugin API version 1
+
+## Plugins
+
+Addons are PHP packages an admin enables. They survive **Update Sneeze** because they live in `data/plugins/{id}`. A copy there overrides a bundled plugin with the same id (`plugins/example` is a disabled reference).
+
+Each plugin has a `plugin.json` and a class that implements `SneezePlugin`. The only host object it receives is `PluginApi`. Capabilities in the manifest (`site.read`, `site.write`, `studio`, `routes`, `compile`) are the contract for that object.
+
+`GET /api/plugins/reference` (admin) returns the manifest fields, core hooks, `PluginApi` methods, and the studio `boot(sneeze)` bridge. That payload is the source for Plugin API documentation.
 
 ## Updating Sneeze
 

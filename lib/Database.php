@@ -228,6 +228,11 @@ SQL);
         if ($version < 5) {
             self::migrateToV5($pdo);
             $pdo->exec('PRAGMA user_version = 5');
+            $version = 5;
+        }
+        if ($version < 6) {
+            self::migrateToV6($pdo);
+            $pdo->exec('PRAGMA user_version = 6');
         }
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
@@ -296,6 +301,26 @@ CREATE TABLE IF NOT EXISTS cms_posts (
     robots TEXT NOT NULL DEFAULT 'index,follow',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+    }
+
+    private static function migrateToV6(PDO $pdo): void
+    {
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS plugins (
+    id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    installed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS plugin_options (
+    plugin_id TEXT NOT NULL,
+    option_key TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    PRIMARY KEY (plugin_id, option_key)
 )
 SQL);
     }
