@@ -15,7 +15,7 @@ const state = {
   tempId: -1,
   codeEditor: null,
   mediaPicker: null,
-  design: { tokens: {}, stylesheets: [], scripts: [] },
+  design: { tokens: {}, stylesheets: [], scripts: [], chrome: { header_html: '', footer_html: '' } },
 };
 
 const toast = document.getElementById('global-status');
@@ -70,6 +70,10 @@ async function init() {
       document.getElementById('app-title').textContent = data.config.site_title;
       document.title = data.config.site_title;
     }
+    if (data.config?.version) {
+      const ver = document.getElementById('settings-version');
+      if (ver) ver.textContent = `Sneeze v${data.config.version}`;
+    }
     if (isAdmin()) {
       document.querySelectorAll('.admin-only').forEach((el) => el.classList.remove('hidden'));
     }
@@ -82,7 +86,7 @@ async function init() {
     bindUsers();
     bindSettings();
     bindImport();
-    await Promise.all([loadTypes(), loadTemplates(), loadPages()]);
+    await Promise.all([loadTypes(), loadTemplates(), loadPages(), isAdmin() ? loadDesign() : Promise.resolve()]);
     if (state.pages[0]) await openPage(state.pages[0].id);
   } catch (e) {
     window.location.href = 'login';
@@ -180,18 +184,73 @@ function bindStudio() {
     }
   });
 
-  ['page-title', 'page-slug', 'page-seo'].forEach((id) => {
-    document.getElementById(id).addEventListener('input', () => {
+  ['page-title', 'page-slug', 'page-seo', 'page-header-html', 'page-footer-html'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('input', () => {
       if (!state.page) return;
       state.page.title = document.getElementById('page-title').value;
       state.page.slug = document.getElementById('page-slug').value;
       state.page.seo_description = document.getElementById('page-seo').value;
+      state.page.header_html = document.getElementById('page-header-html')?.value || '';
+      state.page.footer_html = document.getElementById('page-footer-html')?.value || '';
+      markDirty();
+    });
+  });
+
+  ['page-header-mode', 'page-footer-mode'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      if (!state.page) return;
+      state.page.header_mode = document.getElementById('page-header-mode').value;
+      state.page.footer_mode = document.getElementById('page-footer-mode').value;
+      syncChromeModeUi();
       markDirty();
     });
   });
 
   document.getElementById('code-target').addEventListener('change', renderCode);
   document.getElementById('btn-save-code').addEventListener('click', saveCodeTarget);
+}
+
+function syncChromeModeUi() {
+  const headerMode = document.getElementById('page-header-mode')?.value || 'inherit';
+  const footerMode = document.getElementById('page-footer-mode')?.value || 'inherit';
+  document.getElementById('page-header-wrap')?.classList.toggle('hidden', headerMode !== 'custom');
+  document.getElementById('page-footer-wrap')?.classList.toggle('hidden', footerMode !== 'custom');
+}
+
+function renderPageAssetExcludes() {
+  const box = document.getElementById('page-asset-excludes');
+  if (!box || !state.page) return;
+  const sheets = state.design.stylesheets || [];
+  const scripts = state.design.scripts || [];
+  const disabledSheets = new Set((state.page.disabled_stylesheet_ids || []).map(Number));
+  const disabledScripts = new Set((state.page.disabled_script_ids || []).map(Number));
+  box.innerHTML = '';
+  if (sheets.length === 0 && scripts.length === 0) {
+    box.className = 'page-asset-excludes muted';
+    box.textContent = 'No global CSS/JS yet. Add some in Design.';
+    return;
+  }
+  box.className = 'page-asset-excludes';
+  const addToggle = (label, id, kind, disabledSet) => {
+    const wrap = document.createElement('label');
+    wrap.className = 'toolchain-check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !disabledSet.has(id);
+    input.addEventListener('change', () => {
+      const key = kind === 'stylesheet' ? 'disabled_stylesheet_ids' : 'disabled_script_ids';
+      const next = new Set((state.page[key] || []).map(Number));
+      if (input.checked) next.delete(id);
+      else next.add(id);
+      state.page[key] = [...next];
+      markDirty();
+    });
+    wrap.appendChild(input);
+    wrap.appendChild(document.createTextNode(` ${label}`));
+    box.appendChild(wrap);
+  };
+  sheets.forEach((sheet) => addToggle(`CSS: ${sheet.name}`, Number(sheet.id), 'stylesheet', disabledSheets));
+  scripts.forEach((script) => addToggle(`JS: ${script.name}`, Number(script.id), 'script', disabledScripts));
 }
 
 async function loadPages() {
@@ -229,6 +288,18 @@ async function openPage(id) {
   document.getElementById('page-title').value = state.page.title || '';
   document.getElementById('page-slug').value = state.page.slug || '';
   document.getElementById('page-seo').value = state.page.seo_description || '';
+  state.page.header_mode = state.page.header_mode || 'inherit';
+  state.page.footer_mode = state.page.footer_mode || 'inherit';
+  state.page.header_html = state.page.header_html || '';
+  state.page.footer_html = state.page.footer_html || '';
+  state.page.disabled_stylesheet_ids = state.page.disabled_stylesheet_ids || [];
+  state.page.disabled_script_ids = state.page.disabled_script_ids || [];
+  document.getElementById('page-header-mode').value = state.page.header_mode;
+  document.getElementById('page-footer-mode').value = state.page.footer_mode;
+  document.getElementById('page-header-html').value = state.page.header_html;
+  document.getElementById('page-footer-html').value = state.page.footer_html;
+  syncChromeModeUi();
+  renderPageAssetExcludes();
   const live = document.getElementById('btn-live');
   if (state.page.status === 'published') {
     live.href = apiUrl(state.page.slug === 'index' ? '../index.html' : `../${state.page.slug}.html`);
@@ -506,6 +577,12 @@ async function refreshPreview() {
         template_id: state.page.template_id,
         custom_css: state.page.custom_css,
         custom_js: state.page.custom_js,
+        header_mode: state.page.header_mode,
+        footer_mode: state.page.footer_mode,
+        header_html: state.page.header_html,
+        footer_html: state.page.footer_html,
+        disabled_stylesheet_ids: state.page.disabled_stylesheet_ids || [],
+        disabled_script_ids: state.page.disabled_script_ids || [],
         template: state.templates.find((t) => t.id === state.page.template_id) || null,
         blocks: state.page.blocks,
       }),
@@ -537,6 +614,12 @@ async function saveDraft(silent) {
         template_id: state.page.template_id,
         custom_css: state.page.custom_css,
         custom_js: state.page.custom_js,
+        header_mode: state.page.header_mode,
+        footer_mode: state.page.footer_mode,
+        header_html: state.page.header_html,
+        footer_html: state.page.footer_html,
+        disabled_stylesheet_ids: state.page.disabled_stylesheet_ids || [],
+        disabled_script_ids: state.page.disabled_script_ids || [],
         blocks: state.page.blocks,
       }),
     });
@@ -591,7 +674,7 @@ function bindLibrary() {
       body: JSON.stringify({
         name: 'New template',
         slug: `template-${Date.now()}`,
-        html: '<!DOCTYPE html><html><head><!-- sneeze:css --></head><body>{{slot:content}}<!-- sneeze:js --></body></html>',
+        html: '<!DOCTYPE html><html><head><!-- sneeze:css --></head><body><!-- sneeze:header --><main>{{slot:content}}</main><!-- sneeze:footer --><!-- sneeze:js --></body></html>',
       }),
     })).template;
     await loadTemplates();
@@ -702,29 +785,39 @@ function readLibraryForm(root, item, kind) {
 async function loadDesign() {
   state.design = await api('api/design');
   const box = document.getElementById('token-fields');
-  box.innerHTML = '';
-  const flat = flattenTokens(state.design.tokens || {});
-  Object.entries(flat).forEach(([path, value]) => {
-    const field = document.createElement('div');
-    field.className = 'contact-form__field';
-    field.innerHTML = `<label>${escapeHtml(path)}</label><input data-token="${escapeAttr(path)}" value="${escapeAttr(String(value))}">`;
-    box.appendChild(field);
-  });
-  document.getElementById('btn-save-tokens').onclick = async () => {
-    const next = {};
-    box.querySelectorAll('[data-token]').forEach((input) => {
-      next[input.dataset.token] = input.value;
+  if (box) {
+    box.innerHTML = '';
+    const flat = flattenTokens(state.design.tokens || {});
+    Object.entries(flat).forEach(([path, value]) => {
+      const field = document.createElement('div');
+      field.className = 'contact-form__field';
+      field.innerHTML = `<label>${escapeHtml(path)}</label><input data-token="${escapeAttr(path)}" value="${escapeAttr(String(value))}">`;
+      box.appendChild(field);
     });
-    try {
-      await api('api/design/tokens', { method: 'PUT', body: JSON.stringify({ tokens: unflattenTokens(next) }) });
-      showStatus(toast, 'Tokens saved');
-      schedulePreview();
-    } catch (e) {
-      showStatus(toast, e.message, true);
-    }
-  };
+    document.getElementById('btn-save-tokens').onclick = async () => {
+      const next = {};
+      box.querySelectorAll('[data-token]').forEach((input) => {
+        next[input.dataset.token] = input.value;
+      });
+      try {
+        await api('api/design/tokens', { method: 'PUT', body: JSON.stringify({ tokens: unflattenTokens(next) }) });
+        showStatus(toast, 'Tokens saved');
+        schedulePreview();
+      } catch (e) {
+        showStatus(toast, e.message, true);
+      }
+    };
+  }
+
+  const chrome = state.design.chrome || { header_html: '', footer_html: '' };
+  const headerEl = document.getElementById('chrome-header');
+  const footerEl = document.getElementById('chrome-footer');
+  if (headerEl) headerEl.value = chrome.header_html || '';
+  if (footerEl) footerEl.value = chrome.footer_html || '';
+
   renderAssetEditors('stylesheet-list', state.design.stylesheets, 'css', 'stylesheet');
   renderAssetEditors('script-list', state.design.scripts, 'js', 'script');
+  renderPageAssetExcludes();
   const tool = state.design.toolchain || {};
   const tsEl = document.getElementById('ts-enabled');
   const twEl = document.getElementById('tw-enabled');
@@ -742,19 +835,59 @@ async function loadDesign() {
 
 function renderAssetEditors(containerId, items, field, kind) {
   const el = document.getElementById(containerId);
+  if (!el) return;
   el.innerHTML = '';
+  if (!items || items.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = kind === 'stylesheet'
+      ? 'No stylesheets yet. Click Add stylesheet.'
+      : 'No scripts yet. Click Add script.';
+    el.appendChild(empty);
+    return;
+  }
   items.forEach((item) => {
     const wrap = document.createElement('div');
     wrap.className = 'contact-form__field';
-    wrap.innerHTML = `<label>${escapeHtml(item.name)}</label><textarea rows="12">${escapeHtml(item[field] || '')}</textarea>
-      <div class="contact-form__actions"><button type="button" class="btn btn--primary btn--sm">Save</button></div>`;
-    wrap.querySelector('button').addEventListener('click', async () => {
+    const placement = kind === 'script'
+      ? `<div class="contact-form__field"><label>Placement</label>
+          <select data-placement>
+            <option value="footer"${(item.placement || 'footer') === 'footer' ? ' selected' : ''}>Footer</option>
+            <option value="head"${item.placement === 'head' ? ' selected' : ''}>Head (runs first in footer bundle)</option>
+          </select></div>`
+      : '';
+    wrap.innerHTML = `<label>${escapeHtml(item.name)}</label>
+      <input type="text" data-name value="${escapeAttr(item.name || '')}" style="margin-bottom:0.5rem">
+      <textarea rows="12">${escapeHtml(item[field] || '')}</textarea>
+      ${placement}
+      <div class="contact-form__actions">
+        <button type="button" class="btn btn--primary btn--sm" data-save>Save</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-delete>Delete</button>
+      </div>`;
+    wrap.querySelector('[data-save]').addEventListener('click', async () => {
       const value = wrap.querySelector('textarea').value;
+      const name = wrap.querySelector('[data-name]').value.trim() || item.name;
       const url = kind === 'stylesheet' ? `api/design/stylesheets/${item.id}` : `api/design/scripts/${item.id}`;
-      const body = { ...item, [field]: value, enabled: true };
+      const body = { ...item, name, [field]: value, enabled: true };
+      if (kind === 'script') {
+        body.placement = wrap.querySelector('[data-placement]')?.value || 'footer';
+      }
       try {
         await api(url, { method: 'PUT', body: JSON.stringify(body) });
         showStatus(toast, 'Saved');
+        await loadDesign();
+        schedulePreview();
+      } catch (e) {
+        showStatus(toast, e.message, true);
+      }
+    });
+    wrap.querySelector('[data-delete]').addEventListener('click', async () => {
+      if (!window.confirm(`Delete ${item.name}?`)) return;
+      const url = kind === 'stylesheet' ? `api/design/stylesheets/${item.id}` : `api/design/scripts/${item.id}`;
+      try {
+        await api(url, { method: 'DELETE' });
+        showStatus(toast, 'Deleted');
+        await loadDesign();
         schedulePreview();
       } catch (e) {
         showStatus(toast, e.message, true);
@@ -778,6 +911,55 @@ function bindDesign() {
       state.design.toolchain = data.toolchain;
       showStatus(toast, 'Toolchain saved');
       schedulePreview();
+    } catch (e) {
+      showStatus(toast, e.message, true);
+    }
+  });
+
+  document.getElementById('btn-save-chrome')?.addEventListener('click', async () => {
+    try {
+      const data = await api('api/design/chrome', {
+        method: 'PUT',
+        body: JSON.stringify({
+          header_html: document.getElementById('chrome-header').value,
+          footer_html: document.getElementById('chrome-footer').value,
+        }),
+      });
+      state.design.chrome = data.chrome;
+      showStatus(toast, 'Chrome saved');
+      schedulePreview();
+    } catch (e) {
+      showStatus(toast, e.message, true);
+    }
+  });
+
+  document.getElementById('btn-add-stylesheet')?.addEventListener('click', async () => {
+    try {
+      await api('api/design/stylesheets', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'New stylesheet', css: '', enabled: true, sort_order: (state.design.stylesheets || []).length }),
+      });
+      await loadDesign();
+      showStatus(toast, 'Stylesheet added');
+    } catch (e) {
+      showStatus(toast, e.message, true);
+    }
+  });
+
+  document.getElementById('btn-add-script')?.addEventListener('click', async () => {
+    try {
+      await api('api/design/scripts', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'New script',
+          js: '',
+          placement: 'footer',
+          enabled: true,
+          sort_order: (state.design.scripts || []).length,
+        }),
+      });
+      await loadDesign();
+      showStatus(toast, 'Script added');
     } catch (e) {
       showStatus(toast, e.message, true);
     }
@@ -1056,7 +1238,7 @@ function bindSettings() {
   document.getElementById('settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      await api('api/settings', {
+      const data = await api('api/settings', {
         method: 'POST',
         body: JSON.stringify({
           site_web_base: document.getElementById('settings-web-base').value,
@@ -1066,6 +1248,9 @@ function bindSettings() {
           site_root: document.getElementById('settings-site-root').value,
         }),
       });
+      if (data.settings?.version) {
+        document.getElementById('settings-version').textContent = `Sneeze v${data.settings.version}`;
+      }
       showStatus(toast, 'Settings saved');
     } catch (err) {
       showStatus(toast, err.message, true);
@@ -1075,6 +1260,26 @@ function bindSettings() {
     try {
       const data = await api('api/publish-all', { method: 'POST' });
       showStatus(toast, `Published ${data.pages.length} pages`);
+    } catch (err) {
+      showStatus(toast, err.message, true);
+    }
+  });
+  document.getElementById('btn-update-sneeze')?.addEventListener('click', async () => {
+    const input = document.getElementById('settings-update-zip');
+    const file = input?.files?.[0];
+    if (!file) {
+      showStatus(toast, 'Choose a zip file first', true);
+      return;
+    }
+    if (!window.confirm('Update Sneeze from this zip? Your data folder will be preserved.')) {
+      return;
+    }
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const data = await api('api/settings/update', { method: 'POST', body: form });
+      showStatus(toast, `Updated to v${data.version} (${data.files_updated} files). Reloading…`);
+      setTimeout(() => window.location.reload(), 900);
     } catch (err) {
       showStatus(toast, err.message, true);
     }
@@ -1128,6 +1333,7 @@ async function loadSettings() {
   document.getElementById('settings-upload-dir').value = s.upload_dir || 'uploads';
   document.getElementById('settings-retention').value = s.backup_retention || 20;
   document.getElementById('settings-title').value = s.site_title || '';
+  document.getElementById('settings-version').textContent = `Sneeze v${s.version || '0.0.0'}`;
 }
 
 function applyLocalTypes(nodes) {

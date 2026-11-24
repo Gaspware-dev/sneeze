@@ -215,14 +215,53 @@ CREATE TABLE IF NOT EXISTS cms_entries (
 )
 SQL);
 
-        $pdo->exec('PRAGMA user_version = 3');
+        $version = (int) $pdo->query('PRAGMA user_version')->fetchColumn();
+        if ($version < 3) {
+            $pdo->exec('PRAGMA user_version = 3');
+            $version = 3;
+        }
+        if ($version < 4) {
+            self::migrateToV4($pdo);
+            $pdo->exec('PRAGMA user_version = 4');
+        }
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
         if ($count === 0) {
             Seed::run($pdo);
         }
 
+        DesignRepository::ensureChrome();
         ToolchainRepository::ensure();
+    }
+
+    private static function migrateToV4(PDO $pdo): void
+    {
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS site_chrome (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    header_html TEXT NOT NULL DEFAULT '',
+    footer_html TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
+
+        $cols = [];
+        foreach ($pdo->query('PRAGMA table_info(pages)')->fetchAll() as $col) {
+            $cols[$col['name']] = true;
+        }
+        $alters = [
+            'header_mode' => "ALTER TABLE pages ADD COLUMN header_mode TEXT NOT NULL DEFAULT 'inherit'",
+            'footer_mode' => "ALTER TABLE pages ADD COLUMN footer_mode TEXT NOT NULL DEFAULT 'inherit'",
+            'header_html' => "ALTER TABLE pages ADD COLUMN header_html TEXT NOT NULL DEFAULT ''",
+            'footer_html' => "ALTER TABLE pages ADD COLUMN footer_html TEXT NOT NULL DEFAULT ''",
+            'disabled_stylesheet_ids' => "ALTER TABLE pages ADD COLUMN disabled_stylesheet_ids TEXT NOT NULL DEFAULT '[]'",
+            'disabled_script_ids' => "ALTER TABLE pages ADD COLUMN disabled_script_ids TEXT NOT NULL DEFAULT '[]'",
+        ];
+        foreach ($alters as $name => $sql) {
+            if (!isset($cols[$name])) {
+                $pdo->exec($sql);
+            }
+        }
     }
 
     public static function pdo(): PDO

@@ -12,13 +12,17 @@ class Compiler
     }
 
     /**
-     * @param array<string, mixed>|null $draft page overrides: title, slug, template_id, seo_*, custom_css/js, blocks
+     * @param array<string, mixed>|null $draft page overrides: title, slug, template_id, seo_*, custom_css/js, chrome, blocks
      */
     public function compilePage(int $pageId, bool $preview = false, ?array $draft = null): string
     {
         $page = PageRepository::get($pageId, $draft === null || !isset($draft['blocks']));
         if ($draft) {
-            foreach (['title', 'slug', 'template_id', 'seo_title', 'seo_description', 'custom_css', 'custom_js'] as $key) {
+            foreach ([
+                'title', 'slug', 'template_id', 'seo_title', 'seo_description', 'custom_css', 'custom_js',
+                'header_mode', 'footer_mode', 'header_html', 'footer_html',
+                'disabled_stylesheet_ids', 'disabled_script_ids',
+            ] as $key) {
                 if (array_key_exists($key, $draft)) {
                     $page[$key] = $draft[$key];
                 }
@@ -27,6 +31,7 @@ class Compiler
                 $page['blocks'] = $this->hydrateDraftTree($draft['blocks']);
             }
         }
+        $page = $this->normalizePageAssetFields($page);
 
         $templateId = (int) ($page['template_id'] ?? 0);
         if ($templateId < 1) {
@@ -45,6 +50,7 @@ class Compiler
         $context['_slots'] = $slotHtml;
 
         $html = $this->interpolator->render($template['html'], $context);
+        $html = $this->injectChrome($html, $page, $context);
         $assets = $this->collectAssets($template, $blocks, $page);
         $assets = $this->compileLanguages($html, $assets);
 
@@ -61,11 +67,13 @@ class Compiler
     public function compileDraft(array $page, array $template, array $blocks, bool $preview = true): string
     {
         $page['blocks'] = $blocks;
+        $page = $this->normalizePageAssetFields($page);
         $context = $this->siteContext($page);
         $context['_slots'] = [
             'content' => $this->renderBlocks($blocks, 'content', $preview),
         ];
         $html = $this->interpolator->render($template['html'], $context);
+        $html = $this->injectChrome($html, $page, $context);
         $assets = $this->collectAssets($template, $blocks, $page);
         $assets = $this->compileLanguages($html, $assets);
         $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
@@ -74,6 +82,60 @@ class Compiler
             $html = $this->injectPreviewChrome($html);
         }
         return $html;
+    }
+
+    private function normalizePageAssetFields(array $page): array
+    {
+        $page['header_mode'] = PageRepository::normalizeMode($page['header_mode'] ?? 'inherit');
+        $page['footer_mode'] = PageRepository::normalizeMode($page['footer_mode'] ?? 'inherit');
+        $page['header_html'] = (string) ($page['header_html'] ?? '');
+        $page['footer_html'] = (string) ($page['footer_html'] ?? '');
+        $page['disabled_stylesheet_ids'] = PageRepository::idList($page['disabled_stylesheet_ids'] ?? []);
+        $page['disabled_script_ids'] = PageRepository::idList($page['disabled_script_ids'] ?? []);
+        return $page;
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function injectChrome(string $html, array $page, array $context): string
+    {
+        $hasHeader = str_contains($html, '<!-- sneeze:header -->');
+        $hasFooter = str_contains($html, '<!-- sneeze:footer -->');
+        if (!$hasHeader && !$hasFooter) {
+            return $html;
+        }
+
+        $chrome = DesignRepository::chrome();
+        $header = $this->resolveChromePiece(
+            (string) ($page['header_mode'] ?? 'inherit'),
+            (string) ($page['header_html'] ?? ''),
+            (string) ($chrome['header_html'] ?? '')
+        );
+        $footer = $this->resolveChromePiece(
+            (string) ($page['footer_mode'] ?? 'inherit'),
+            (string) ($page['footer_html'] ?? ''),
+            (string) ($chrome['footer_html'] ?? '')
+        );
+
+        if ($hasHeader) {
+            $rendered = $header !== '' ? $this->interpolator->render($header, $context) : '';
+            $html = str_replace('<!-- sneeze:header -->', $rendered, $html);
+        }
+        if ($hasFooter) {
+            $rendered = $footer !== '' ? $this->interpolator->render($footer, $context) : '';
+            $html = str_replace('<!-- sneeze:footer -->', $rendered, $html);
+        }
+        return $html;
+    }
+
+    private function resolveChromePiece(string $mode, string $custom, string $sitewide): string
+    {
+        return match (PageRepository::normalizeMode($mode)) {
+            'none' => '',
+            'custom' => $custom,
+            default => $sitewide,
+        };
     }
 
     private function hydrateDraftTree(array $tree): array
@@ -251,8 +313,15 @@ class Compiler
 
     private function collectAssets(array $template, array $blocks, array $page): array
     {
+        $disabledSheets = array_fill_keys(PageRepository::idList($page['disabled_stylesheet_ids'] ?? []), true);
+        $disabledScripts = array_fill_keys(PageRepository::idList($page['disabled_script_ids'] ?? []), true);
+
         $cssParts = [DesignRepository::tokensToCss(DesignRepository::tokens())];
         foreach (DesignRepository::stylesheets() as $sheet) {
+            $id = (int) ($sheet['id'] ?? 0);
+            if (isset($disabledSheets[$id])) {
+                continue;
+            }
             if ((int) $sheet['enabled'] === 1 && trim((string) $sheet['css']) !== '') {
                 $cssParts[] = "/* {$sheet['name']} */\n" . $sheet['css'];
             }
@@ -264,6 +333,10 @@ class Compiler
         $jsHead = [];
         $jsFoot = [];
         foreach (DesignRepository::scripts() as $script) {
+            $id = (int) ($script['id'] ?? 0);
+            if (isset($disabledScripts[$id])) {
+                continue;
+            }
             if ((int) $script['enabled'] !== 1 || trim((string) $script['js']) === '') {
                 continue;
             }

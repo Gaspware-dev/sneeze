@@ -4,6 +4,60 @@ declare(strict_types=1);
 
 class DesignRepository
 {
+    public static function ensureChrome(): void
+    {
+        $row = Database::pdo()->query('SELECT id FROM site_chrome WHERE id = 1')->fetch();
+        if ($row) {
+            return;
+        }
+        Database::pdo()->prepare(
+            'INSERT INTO site_chrome (id, header_html, footer_html) VALUES (1, ?, ?)'
+        )->execute([Seed::defaultHeader(), Seed::defaultFooter()]);
+    }
+
+    public static function chrome(): array
+    {
+        self::ensureChrome();
+        $row = Database::pdo()->query('SELECT header_html, footer_html, updated_at FROM site_chrome WHERE id = 1')->fetch();
+        return [
+            'header_html' => (string) ($row['header_html'] ?? ''),
+            'footer_html' => (string) ($row['footer_html'] ?? ''),
+            'updated_at' => $row['updated_at'] ?? null,
+        ];
+    }
+
+    public static function saveChrome(array $body): array
+    {
+        self::ensureChrome();
+        Database::pdo()->prepare(
+            'UPDATE site_chrome SET header_html = ?, footer_html = ?, updated_at = datetime(\'now\') WHERE id = 1'
+        )->execute([
+            (string) ($body['header_html'] ?? ''),
+            (string) ($body['footer_html'] ?? ''),
+        ]);
+        return self::chrome();
+    }
+
+    /**
+     * Store chrome only when still empty (first import wins).
+     */
+    public static function fillChromeIfEmpty(string $header, string $footer): void
+    {
+        self::ensureChrome();
+        $current = self::chrome();
+        $header = trim($header);
+        $footer = trim($footer);
+        $nextHeader = trim($current['header_html']) === '' && $header !== '' ? $header : $current['header_html'];
+        $nextFooter = trim($current['footer_html']) === '' && $footer !== '' ? $footer : $current['footer_html'];
+        if ($nextHeader === $current['header_html'] && $nextFooter === $current['footer_html']) {
+            return;
+        }
+        self::saveChrome([
+            'header_html' => $nextHeader,
+            'footer_html' => $nextFooter,
+        ]);
+    }
+
     public static function tokens(): array
     {
         $row = Database::pdo()->query('SELECT tokens_json FROM design_tokens WHERE id = 1')->fetch();

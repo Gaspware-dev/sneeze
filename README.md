@@ -8,6 +8,7 @@ See [PLAN.md](PLAN.md) for the redesign architecture.
 ## Requirements
 
 - PHP 8.2+ with **PDO SQLite** (`php-sqlite3` / `pdo_sqlite`), DOM, JSON, fileinfo
+- Optional for self-update: **zip** (`php-zip` / `ZipArchive`) — required only when using **Update Sneeze**
 - Apache with `mod_rewrite` (or nginx equivalent), or PHP built-in server for local dev
 - PHP write access to the folder where published HTML should land (and the published asset folder)
 
@@ -41,10 +42,11 @@ You can **import a preexisting HTML file** from the studio (or Library): Sneeze 
 | `pdo_sqlite` | `php8.3-sqlite3` |
 | `dom` (DOMDocument) | `php8.3-xml` |
 | `fileinfo` | usually bundled with PHP |
+| `zip` (optional) | `php8.3-zip` |
 
 ```bash
-sudo apt install php8.3-sqlite3 php8.3-xml
-php -m | grep -iE 'sqlite|dom'
+sudo apt install php8.3-sqlite3 php8.3-xml php8.3-zip
+php -m | grep -iE 'sqlite|dom|zip'
 ```
 
 Optional: `php8.3-gd` for upload thumbnails.
@@ -98,9 +100,12 @@ return true;
 ## Features
 
 - **Drop-in subfolder** — does not take over site serving
+- **Versioned updates** — Settings → Update Sneeze accepts a GitHub **Code → Download ZIP**; `data/` is preserved
 - **Studio** — live preview on the left; blocks, writing, and code on the right
 - **Templates & blocks** — stored in SQLite, including HTML/CSS/JS for each definition
+- **Site chrome** — sitewide header/footer in Design; pages can inherit, override, or hide them
 - **Design tokens** — JSON tokens compile to `:root` CSS variables and are inlined on publish
+- **Global CSS/JS** — Design stylesheets and scripts, with per-page excludes
 - **Draft vs publish** — save to the database; publish merges one HTML file per page
 - **Backup on publish** — previous files copied to `sneeze/data/backups/`
 - **Media library** — studio uploads stay in `sneeze/data/uploads` until publish copies used files into the site asset folder
@@ -109,6 +114,15 @@ return true;
 - **Users** — admin and editor roles
 - **TypeScript** — page/block/global scripts compile to JS on preview and publish
 - **Tailwind CSS** — utility classes in HTML (and `@apply` in CSS) compile against `tailwind.config.ts` and design tokens
+
+## Updating Sneeze
+
+1. On GitHub, open the repo → **Code** → **Download ZIP** (or use a release zip with the same layout).
+2. In the studio, open **Settings → Update Sneeze** and upload that zip.
+3. Sneeze extracts the package (including GitHub’s nested `owner-repo-sha/` folder), overlays app files, and leaves `sneeze/data/` alone (config, SQLite, uploads, backups).
+4. Downgrades are refused when the package `VERSION` is older than the installed version.
+
+Current version is shown in Settings (starts at **v2.0.0-alpha1**).
 
 ## Publish pipeline
 

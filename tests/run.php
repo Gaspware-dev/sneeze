@@ -95,6 +95,10 @@ expect('tw config no satisfies', str_contains($cfgJs, 'satisfies'), false);
 expect('asset folder sanitized', Config::sanitizeUploadDir('assets/img', false), 'assets/img');
 expect('asset folder rejects traversal', Config::sanitizeUploadDir('../etc', false), 'uploads');
 
+expect('version compare equal', Version::compare('2.0.0-alpha1', '2.0.0-alpha1'), 0);
+expect('version compare alpha order', Version::compare('2.0.0-alpha1', '2.0.0-alpha2') < 0, true);
+expect('version compare release after alpha', Version::compare('2.0.0', '2.0.0-alpha1') > 0, true);
+
 $doc = <<<'HTML'
 <!DOCTYPE html>
 <html lang="en">
@@ -117,6 +121,10 @@ expect('import title', $parsed['title'], 'Landing');
 expect('import description', $parsed['description'], 'Old site');
 expectContains('import slot', $parsed['template_html'], '{{slot:content}}');
 expectContains('import title token', $parsed['template_html'], '{{page.seo_title}}');
+expectContains('import header marker', $parsed['template_html'], '<!-- sneeze:header -->');
+expectContains('import footer marker', $parsed['template_html'], '<!-- sneeze:footer -->');
+expectContains('import header extracted', $parsed['header_html'], '<header>');
+expectContains('import footer extracted', $parsed['footer_html'], '<footer>');
 expectContains('import content', $parsed['content'], 'Hello imported');
 expect('import content not in chrome', str_contains($parsed['template_html'], 'Hello imported'), false);
 expectContains('import css extracted', $parsed['css'], 'color: red');
@@ -124,11 +132,18 @@ $frag = (new HtmlImporter())->parse('<section class="hero">Fragment</section>');
 expect('fragment not document', $frag['is_document'], false);
 expectContains('fragment body', $frag['content'], 'Fragment');
 
+file_put_contents($installDir . '/VERSION', "2.0.0-alpha1\n");
+file_put_contents($installDir . '/index.php', "<?php\n// sneeze stub\n");
 Config::init($installDir);
+expect('version current', Version::current(), '2.0.0-alpha1');
 Database::connect(Config::dataDir());
 
 $home = PageRepository::all()[0] ?? null;
 expect('seeded home', $home['slug'] ?? null, 'index');
+
+$chrome = DesignRepository::chrome();
+expectContains('seeded header', $chrome['header_html'], 'site-header');
+expectContains('seeded footer', $chrome['footer_html'], 'site-footer');
 
 $html = (new Compiler())->compilePage((int) $home['id'], false);
 expectContains('doctype', $html, '<!DOCTYPE html>');
@@ -145,6 +160,7 @@ expect('no empty class', str_contains($html, 'class=""'), false);
 expect('no unused js tag', str_contains($html, '<script'), false);
 expect('no css comments', str_contains($html, '/* Theme'), false);
 expectContains('quote figure', $html, '<figure class="quote wrap">');
+expect('markers replaced', str_contains($html, 'sneeze:header'), false);
 if (str_contains($html, 'sneeze-block')) {
     $failed++;
     fwrite(STDERR, "FAIL publish html should not include preview chrome\n");
@@ -152,6 +168,30 @@ if (str_contains($html, 'sneeze-block')) {
     $passed++;
     echo "ok  no preview chrome on publish\n";
 }
+
+$noHeader = (new Compiler())->compilePage((int) $home['id'], false, ['header_mode' => 'none']);
+expect('header none', str_contains($noHeader, '<header class="site-header">'), false);
+expectContains('footer still', $noHeader, '<footer class="site-footer">');
+$customHeader = (new Compiler())->compilePage((int) $home['id'], false, [
+    'header_mode' => 'custom',
+    'header_html' => '<header class="custom-only">CustomNav</header>',
+]);
+expectContains('custom header', $customHeader, 'CustomNav');
+expect('custom replaces site header', str_contains($customHeader, '<header class="site-header">'), false);
+
+$script = DesignRepository::saveScript([
+    'name' => 'Tracker',
+    'js' => 'window.__sneezeTracker = 1;',
+    'placement' => 'footer',
+    'enabled' => true,
+]);
+$withScript = (new Compiler())->compilePage((int) $home['id'], false);
+expectContains('global script included', $withScript, '__sneezeTracker');
+$withoutScript = (new Compiler())->compilePage((int) $home['id'], false, [
+    'disabled_script_ids' => [(int) $script['id']],
+]);
+expect('global script excluded', str_contains($withoutScript, '__sneezeTracker'), false);
+DesignRepository::deleteScript((int) $script['id']);
 
 $preview = (new Compiler())->compilePage((int) $home['id'], true);
 expectContains('preview chrome', $preview, 'data-sneeze-block');
@@ -210,6 +250,43 @@ $mediaPublish = (new Compiler())->compilePage((int) $home['id'], false, ['templa
 expectContains('publish uses site assets', $mediaPublish, $media['path']);
 expect('publish copied asset', is_file(MediaStore::publishedAbs($media['storage_key'])), true);
 expect('publish has no studio url', str_contains($mediaPublish, 'api/media/file/'), false);
+
+if (class_exists('ZipArchive')) {
+    $pkgRoot = $installDir . '/pkg-src';
+    mkdir($pkgRoot . '/lib', 0755, true);
+    file_put_contents($pkgRoot . '/index.php', "<?php\necho 'updated';\n");
+    file_put_contents($pkgRoot . '/VERSION', "2.0.0-alpha2\n");
+    file_put_contents($pkgRoot . '/lib/Hello.php', "<?php\nclass Hello {}\n");
+    file_put_contents($installDir . '/data/keep-me.txt', 'preserve');
+    $nested = $installDir . '/zip-nested/andreherberth-sneeze-abc123';
+    mkdir($nested . '/lib', 0755, true);
+    foreach (['index.php', 'VERSION'] as $f) {
+        copy($pkgRoot . '/' . $f, $nested . '/' . $f);
+    }
+    copy($pkgRoot . '/lib/Hello.php', $nested . '/lib/Hello.php');
+    $zipPath = $installDir . '/update.zip';
+    $zip = new ZipArchive();
+    $zip->open($zipPath, ZipArchive::CREATE);
+    $zipBase = 'andreherberth-sneeze-abc123';
+    $zip->addFile($nested . '/index.php', $zipBase . '/index.php');
+    $zip->addFile($nested . '/VERSION', $zipBase . '/VERSION');
+    $zip->addFile($nested . '/lib/Hello.php', $zipBase . '/lib/Hello.php');
+    $zip->close();
+    $result = Updater::applyUpload([
+        'name' => 'update.zip',
+        'tmp_name' => $zipPath,
+        'error' => UPLOAD_ERR_OK,
+        'size' => filesize($zipPath),
+        'type' => 'application/zip',
+    ]);
+    expect('update version', $result['version'], '2.0.0-alpha2');
+    expect('update files', $result['files_updated'] > 0, true);
+    expectContains('update wrote index', (string) file_get_contents($installDir . '/index.php'), 'updated');
+    expect('update preserved data', is_file($installDir . '/data/keep-me.txt'), true);
+    expect('update preserved db', is_file($installDir . '/data/sneeze.db'), true);
+} else {
+    echo "skip updater (ZipArchive missing)\n";
+}
 
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);
