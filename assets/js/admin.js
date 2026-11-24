@@ -16,6 +16,10 @@ const state = {
   codeEditor: null,
   mediaPicker: null,
   design: { tokens: {}, stylesheets: [], scripts: [], chrome: { header_html: '', footer_html: '' } },
+  cmsSources: [],
+  cmsEntriesBySource: {},
+  posts: [],
+  mdPreviewTimer: null,
 };
 
 const toast = document.getElementById('global-status');
@@ -86,7 +90,13 @@ async function init() {
     bindUsers();
     bindSettings();
     bindImport();
-    await Promise.all([loadTypes(), loadTemplates(), loadPages(), isAdmin() ? loadDesign() : Promise.resolve()]);
+    await Promise.all([
+      loadTypes(),
+      loadTemplates(),
+      loadPages(),
+      loadCmsSources(),
+      isAdmin() ? loadDesign() : Promise.resolve(),
+    ]);
     if (state.pages[0]) await openPage(state.pages[0].id);
   } catch (e) {
     window.location.href = 'login';
@@ -181,6 +191,18 @@ function bindStudio() {
       selectBlock(e.data.id);
       const writeBtn = document.querySelector('[data-tab="write"]');
       writeBtn?.click();
+      return;
+    }
+    if (e.data?.type === 'sneeze:edit') {
+      applyInlineEdit(e.data.id, e.data.field, e.data.value);
+      return;
+    }
+    if (e.data?.type === 'sneeze:drop') {
+      dropBlock(e.data.id, e.data.parentId, e.data.slot, e.data.index);
+      return;
+    }
+    if (e.data?.type === 'sneeze:add') {
+      addBlockAt(Number(e.data.typeId), e.data.parentId, e.data.slot, e.data.index);
     }
   });
 
@@ -320,11 +342,69 @@ function renderPalette() {
   state.blockTypes.forEach((type) => {
     const btn = document.createElement('button');
     btn.type = 'button';
+    btn.draggable = true;
     btn.textContent = `${type.icon || ''} ${type.name}`.trim();
-    btn.title = `Add ${type.name}`;
+    btn.title = `Add ${type.name} (or drag into preview)`;
     btn.addEventListener('click', () => addBlock(type.id));
+    btn.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/x-sneeze-type', String(type.id));
+      e.dataTransfer.setData('text/plain', String(type.id));
+    });
     el.appendChild(btn);
   });
+}
+
+function createBlockNode(type, parentId, slot) {
+  const node = {
+    id: state.tempId,
+    block_type_id: type.id,
+    block_type: type,
+    parent_id: parentId ?? null,
+    slot,
+    data: defaultData(type.schema),
+    children: [],
+    cms_source_id: null,
+    cms_entry_key: null,
+  };
+  state.tempId -= 1;
+  return node;
+}
+
+function siblingList(parentId, slot) {
+  if (!state.page) return null;
+  if (!parentId || parentId === '0' || parentId === 0 || parentId === 'null') {
+    if (!state.page.blocks) state.page.blocks = [];
+    return {
+      list: state.page.blocks,
+      filter: (node) => (node.slot || 'content') === slot,
+    };
+  }
+  const parent = findBlock(parentId);
+  if (!parent) return null;
+  parent.children = parent.children || [];
+  return {
+    list: parent.children,
+    filter: (node) => (node.slot || 'content') === slot,
+  };
+}
+
+function insertIntoSlot(listInfo, node, index) {
+  const slotNodes = listInfo.list.filter(listInfo.filter);
+  const clamped = Math.max(0, Math.min(index, slotNodes.length));
+  if (clamped >= slotNodes.length) {
+    const last = slotNodes[slotNodes.length - 1];
+    if (!last) {
+      listInfo.list.push(node);
+      return;
+    }
+    const lastPos = listInfo.list.indexOf(last);
+    listInfo.list.splice(lastPos + 1, 0, node);
+    return;
+  }
+  const target = slotNodes[clamped];
+  const pos = listInfo.list.indexOf(target);
+  listInfo.list.splice(pos, 0, node);
 }
 
 function addBlock(typeId, parent = null, slot = 'content') {
@@ -340,19 +420,7 @@ function addBlock(typeId, parent = null, slot = 'content') {
     }
   }
 
-  const node = {
-    id: state.tempId,
-    block_type_id: type.id,
-    block_type: type,
-    parent_id: parent?.id ?? null,
-    slot,
-    data: defaultData(type.schema),
-    children: [],
-    cms_source_id: null,
-    cms_entry_key: null,
-  };
-  state.tempId -= 1;
-
+  const node = createBlockNode(type, parent?.id ?? null, slot);
   if (parent) {
     parent.children = parent.children || [];
     parent.children.push(node);
@@ -364,6 +432,78 @@ function addBlock(typeId, parent = null, slot = 'content') {
   markDirty();
   renderOutline();
   renderWrite();
+}
+
+function addBlockAt(typeId, parentId, slot = 'content', index = 0) {
+  const type = state.blockTypes.find((t) => Number(t.id) === Number(typeId));
+  if (!type || !state.page) return;
+  const listInfo = siblingList(parentId, slot);
+  if (!listInfo) return;
+  const parent = (!parentId || parentId === '0' || parentId === 0) ? null : findBlock(parentId);
+  const node = createBlockNode(type, parent?.id ?? null, slot);
+  insertIntoSlot(listInfo, node, Number(index) || 0);
+  state.selectedId = node.id;
+  markDirty();
+  renderOutline();
+  renderWrite();
+}
+
+function dropBlock(id, parentId, slot = 'content', index = 0) {
+  if (!state.page) return;
+  const found = locate(state.page.blocks || [], id);
+  if (!found) return;
+  const [item] = found.list.splice(found.index, 1);
+  const targetParentId = (!parentId || parentId === '0' || parentId === 0) ? null : parentId;
+  if (targetParentId && String(targetParentId) === String(id)) {
+    found.list.splice(found.index, 0, item);
+    return;
+  }
+  if (targetParentId && isDescendant(item, targetParentId)) {
+    found.list.splice(found.index, 0, item);
+    return;
+  }
+  item.slot = slot || 'content';
+  item.parent_id = targetParentId;
+  const listInfo = siblingList(targetParentId, item.slot);
+  if (!listInfo) {
+    (state.page.blocks || []).push(item);
+  } else {
+    let insertAt = Number(index) || 0;
+    if (found.list === listInfo.list && found.index < insertAt) {
+      insertAt -= 1;
+    }
+    insertIntoSlot(listInfo, item, Math.max(0, insertAt));
+  }
+  state.selectedId = item.id;
+  markDirty();
+  renderOutline();
+  renderWrite();
+}
+
+function isDescendant(node, possibleChildId) {
+  const walk = (n) => {
+    for (const child of n.children || []) {
+      if (String(child.id) === String(possibleChildId)) return true;
+      if (walk(child)) return true;
+    }
+    return false;
+  };
+  return walk(node);
+}
+
+function applyInlineEdit(id, field, value) {
+  const node = findBlock(id);
+  if (!node || !field) return;
+  node.data = node.data || {};
+  if (node.data[field] === value) return;
+  node.data[field] = value;
+  markDirty();
+  if (String(state.selectedId) === String(id)) {
+    const active = document.activeElement;
+    if (!active || !active.closest?.('#write-fields')) {
+      renderWrite();
+    }
+  }
 }
 
 function renderOutline() {
@@ -469,11 +609,117 @@ function renderWrite() {
     box.innerHTML = '<p class="muted">Select a block in the outline or preview.</p>';
     return;
   }
-  renderFields(box, node.block_type?.schema, node.data || {}, (name, value) => {
+  box.innerHTML = '';
+  box.appendChild(renderCmsBinding(node));
+  const fieldsHost = document.createElement('div');
+  box.appendChild(fieldsHost);
+  renderFields(fieldsHost, node.block_type?.schema, node.data || {}, (name, value) => {
     node.data = node.data || {};
     node.data[name] = value;
     markDirty();
   }, { pickMedia });
+}
+
+function renderCmsBinding(node) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cms-binding';
+  const title = document.createElement('h4');
+  title.textContent = 'CMS cache';
+  wrap.appendChild(title);
+  const help = document.createElement('p');
+  help.className = 'muted';
+  help.textContent = node.block_type?.slug === 'cms_list'
+    ? 'Bind a source to list cached entries at compile time.'
+    : 'Bind a cached entry to fill this block’s fields on sync.';
+  wrap.appendChild(help);
+
+  const sourceField = document.createElement('div');
+  sourceField.className = 'contact-form__field';
+  const sourceLabel = document.createElement('label');
+  sourceLabel.textContent = 'Source';
+  const sourceSelect = document.createElement('select');
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'None';
+  sourceSelect.appendChild(none);
+  state.cmsSources.forEach((source) => {
+    const opt = document.createElement('option');
+    opt.value = String(source.id);
+    opt.textContent = `${source.name} (${source.adapter})`;
+    if (String(node.cms_source_id || '') === String(source.id)) opt.selected = true;
+    sourceSelect.appendChild(opt);
+  });
+  sourceField.appendChild(sourceLabel);
+  sourceField.appendChild(sourceSelect);
+  wrap.appendChild(sourceField);
+
+  const isList = node.block_type?.slug === 'cms_list';
+  let entrySelect = null;
+  if (!isList) {
+    const entryField = document.createElement('div');
+    entryField.className = 'contact-form__field';
+    const entryLabel = document.createElement('label');
+    entryLabel.textContent = 'Entry';
+    entrySelect = document.createElement('select');
+    entryField.appendChild(entryLabel);
+    entryField.appendChild(entrySelect);
+    wrap.appendChild(entryField);
+  }
+
+  const refreshEntries = async () => {
+    if (!entrySelect) return;
+    entrySelect.innerHTML = '';
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'Select entry…';
+    entrySelect.appendChild(empty);
+    const sourceId = sourceSelect.value;
+    if (!sourceId) return;
+    let entries = state.cmsEntriesBySource[sourceId];
+    if (!entries) {
+      try {
+        const data = await api(`api/cms/sources/${sourceId}`);
+        entries = data.entries || [];
+        state.cmsEntriesBySource[sourceId] = entries;
+      } catch {
+        entries = [];
+      }
+    }
+    entries.forEach((entry) => {
+      const opt = document.createElement('option');
+      opt.value = entry.external_id;
+      const label = entry.data?.title || entry.data?.name || entry.external_id;
+      opt.textContent = label;
+      if (String(node.cms_entry_key || '') === String(entry.external_id)) opt.selected = true;
+      entrySelect.appendChild(opt);
+    });
+  };
+
+  sourceSelect.addEventListener('change', async () => {
+    node.cms_source_id = sourceSelect.value ? Number(sourceSelect.value) : null;
+    if (isList) {
+      node.data = node.data || {};
+      node.data.cms_source_id = node.cms_source_id;
+      node.cms_entry_key = null;
+    }
+    markDirty();
+    await refreshEntries();
+  });
+  if (entrySelect) {
+    entrySelect.addEventListener('change', () => {
+      node.cms_entry_key = entrySelect.value || null;
+      const sourceId = sourceSelect.value;
+      const entries = state.cmsEntriesBySource[sourceId] || [];
+      const entry = entries.find((item) => String(item.external_id) === String(node.cms_entry_key));
+      if (entry?.data) {
+        node.data = { ...(node.data || {}), ...entry.data };
+      }
+      markDirty();
+      renderWrite();
+    });
+    refreshEntries();
+  }
+  return wrap;
 }
 
 function renderCode() {
@@ -1010,7 +1256,108 @@ async function fillMediaGrid(grid, picking, items) {
 }
 
 function bindCms() {
-  document.getElementById('cms-form').addEventListener('submit', async (e) => {
+  document.getElementById('cms-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-cms-tab]');
+    if (!btn) return;
+    document.querySelectorAll('#cms-tabs button').forEach((b) => b.classList.toggle('is-active', b === btn));
+    document.querySelectorAll('.cms-panel').forEach((panel) => {
+      panel.classList.toggle('is-active', panel.id === `cms-panel-${btn.dataset.cmsTab}`);
+    });
+  });
+
+  document.getElementById('btn-new-post')?.addEventListener('click', () => {
+    fillPostForm({
+      id: '',
+      title: '',
+      slug: '',
+      status: 'draft',
+      body_markdown: '',
+      excerpt: '',
+      featured_image: '',
+      author_name: '',
+      author_url: '',
+      categories: [],
+      tags: [],
+      published_at: '',
+      seo_title: '',
+      seo_description: '',
+      og_image: '',
+      canonical_url: '',
+      robots: 'index,follow',
+    });
+  });
+
+  document.getElementById('btn-post-featured')?.addEventListener('click', () => {
+    pickMedia((url) => {
+      document.getElementById('post-featured').value = url;
+    });
+  });
+
+  document.getElementById('post-markdown')?.addEventListener('input', () => {
+    clearTimeout(state.mdPreviewTimer);
+    state.mdPreviewTimer = setTimeout(refreshMarkdownPreview, 320);
+  });
+
+  document.getElementById('cms-post-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('post-id').value;
+    const payload = {
+      id: id ? Number(id) : undefined,
+      title: document.getElementById('post-title').value,
+      slug: document.getElementById('post-slug').value,
+      status: document.getElementById('post-status').value,
+      body_markdown: document.getElementById('post-markdown').value,
+      excerpt: document.getElementById('post-excerpt').value,
+      featured_image: document.getElementById('post-featured').value,
+      author_name: document.getElementById('post-author-name').value,
+      author_url: document.getElementById('post-author-url').value,
+      categories: document.getElementById('post-categories').value,
+      tags: document.getElementById('post-tags').value,
+      published_at: document.getElementById('post-published-at').value || null,
+      seo_title: document.getElementById('post-seo-title').value,
+      seo_description: document.getElementById('post-seo-description').value,
+      og_image: document.getElementById('post-og-image').value,
+      canonical_url: document.getElementById('post-canonical').value,
+      robots: document.getElementById('post-robots').value,
+    };
+    try {
+      const data = await api(payload.id ? `api/cms/posts/${payload.id}` : 'api/cms/posts', {
+        method: payload.id ? 'PUT' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      fillPostForm(data.post);
+      showStatus(toast, 'Post saved');
+      await loadPosts();
+      state.cmsEntriesBySource = {};
+    } catch (err) {
+      showStatus(toast, err.message, true);
+    }
+  });
+
+  document.getElementById('btn-delete-post')?.addEventListener('click', async () => {
+    const id = document.getElementById('post-id').value;
+    if (!id) return;
+    if (!confirm('Delete this post?')) return;
+    try {
+      await api(`api/cms/posts/${id}`, { method: 'DELETE' });
+      document.getElementById('btn-new-post')?.click();
+      showStatus(toast, 'Post deleted');
+      await loadPosts();
+    } catch (err) {
+      showStatus(toast, err.message, true);
+    }
+  });
+
+  document.getElementById('btn-publish-posts')?.addEventListener('click', async () => {
+    try {
+      const data = await api('api/cms/posts/publish', { method: 'POST' });
+      showStatus(toast, `Published ${data.posts?.length || 0} posts`);
+    } catch (err) {
+      showStatus(toast, err.message, true);
+    }
+  });
+
+  document.getElementById('cms-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     let mapping = {};
     const raw = document.getElementById('cms-mapping').value.trim();
@@ -1035,18 +1382,19 @@ function bindCms() {
       });
       document.getElementById('cms-id').value = data.source.id;
       showStatus(toast, 'Source saved');
-      await loadCms();
+      await loadCmsSources();
     } catch (err) {
       showStatus(toast, err.message, true);
     }
   });
 
-  document.getElementById('btn-cms-sync').addEventListener('click', async () => {
+  document.getElementById('btn-cms-sync')?.addEventListener('click', async () => {
     const id = document.getElementById('cms-id').value;
     if (!id) { showStatus(toast, 'Save a source first', true); return; }
     try {
       const data = await api(`api/cms/sources/${id}/sync`, { method: 'POST' });
       document.getElementById('cms-entries').textContent = JSON.stringify(data.entries, null, 2);
+      state.cmsEntriesBySource[id] = data.entries || [];
       showStatus(toast, `Synced ${data.fetched} entries, applied to ${data.applied} blocks`);
     } catch (err) {
       showStatus(toast, err.message, true);
@@ -1055,15 +1403,86 @@ function bindCms() {
 }
 
 async function loadCms() {
-  const data = await api('api/cms/sources');
-  const list = document.getElementById('cms-source-list');
+  await Promise.all([loadPosts(), loadCmsSources()]);
+}
+
+async function loadPosts() {
+  const data = await api('api/cms/posts');
+  state.posts = data.posts || [];
+  const list = document.getElementById('cms-post-list');
+  if (!list) return;
   list.innerHTML = '';
-  data.sources.forEach((source) => {
+  state.posts.forEach((post) => {
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'event';
-    btn.innerHTML = `<div class="event__details"><h3>${escapeHtml(source.name)}</h3><p>${escapeHtml(source.config?.url || '')}</p></div>`;
+    btn.innerHTML = `<div class="event__details"><h3>${escapeHtml(post.title)}</h3><p>${escapeHtml(post.status)} · ${escapeHtml(post.slug)}</p></div>`;
+    btn.addEventListener('click', () => fillPostForm(post));
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+}
+
+function fillPostForm(post) {
+  document.getElementById('post-id').value = post.id || '';
+  document.getElementById('post-title').value = post.title || '';
+  document.getElementById('post-slug').value = post.slug || '';
+  document.getElementById('post-status').value = post.status || 'draft';
+  document.getElementById('post-markdown').value = post.body_markdown || '';
+  document.getElementById('post-excerpt').value = post.excerpt || '';
+  document.getElementById('post-featured').value = post.featured_image || '';
+  document.getElementById('post-author-name').value = post.author_name || '';
+  document.getElementById('post-author-url').value = post.author_url || '';
+  document.getElementById('post-categories').value = (post.categories || []).join(', ');
+  document.getElementById('post-tags').value = (post.tags || []).join(', ');
+  document.getElementById('post-published-at').value = post.published_at || '';
+  document.getElementById('post-seo-title').value = post.seo_title || '';
+  document.getElementById('post-seo-description').value = post.seo_description || '';
+  document.getElementById('post-og-image').value = post.og_image || '';
+  document.getElementById('post-canonical').value = post.canonical_url || '';
+  document.getElementById('post-robots').value = post.robots || 'index,follow';
+  if (post.body_html) {
+    document.getElementById('post-md-preview').innerHTML = post.body_html;
+  } else {
+    refreshMarkdownPreview();
+  }
+}
+
+async function refreshMarkdownPreview() {
+  const md = document.getElementById('post-markdown')?.value || '';
+  const preview = document.getElementById('post-md-preview');
+  if (!preview) return;
+  if (!md.trim()) {
+    preview.innerHTML = '<p class="muted">Nothing to preview.</p>';
+    return;
+  }
+  try {
+    const data = await api('api/cms/markdown', {
+      method: 'POST',
+      body: JSON.stringify({ markdown: md }),
+    });
+    preview.innerHTML = data.html || '';
+  } catch {
+    preview.innerHTML = '<p class="muted">Preview unavailable.</p>';
+  }
+}
+
+async function loadCmsSources() {
+  const data = await api('api/cms/sources');
+  state.cmsSources = data.sources || [];
+  const list = document.getElementById('cms-source-list');
+  if (!list) return;
+  list.innerHTML = '';
+  state.cmsSources.forEach((source) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'event';
+    const subtitle = source.adapter === 'builtin_posts'
+      ? 'Built-in posts'
+      : (source.config?.url || source.adapter || '');
+    btn.innerHTML = `<div class="event__details"><h3>${escapeHtml(source.name)}</h3><p>${escapeHtml(subtitle)}</p></div>`;
     btn.addEventListener('click', async () => {
       document.getElementById('cms-id').value = source.id;
       document.getElementById('cms-name').value = source.name;
@@ -1072,6 +1491,7 @@ async function loadCms() {
       document.getElementById('cms-id-path').value = source.config?.id_path || 'id';
       document.getElementById('cms-mapping').value = JSON.stringify(source.config?.mapping || {}, null, 2);
       const detail = await api(`api/cms/sources/${source.id}`);
+      state.cmsEntriesBySource[source.id] = detail.entries || [];
       document.getElementById('cms-entries').textContent = JSON.stringify(detail.entries, null, 2);
     });
     li.appendChild(btn);

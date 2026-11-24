@@ -195,6 +195,46 @@ DesignRepository::deleteScript((int) $script['id']);
 
 $preview = (new Compiler())->compilePage((int) $home['id'], true);
 expectContains('preview chrome', $preview, 'data-sneeze-block');
+expectContains('preview draggable', $preview, 'draggable="true"');
+expectContains('preview dropzone', $preview, 'sneeze-dropzone');
+expectContains('preview drop message', $preview, 'sneeze:drop');
+expectContains('preview edit message', $preview, 'sneeze:edit');
+expectContains('preview editable field', $preview, 'sneeze-editable');
+expectContains('preview posts nav', $preview, 'posts/index.html');
+
+$mdHtml = Markdown::toHtml("# Hello\n\nA **bold** [link](https://example.com).\n\n- one\n- two");
+expectContains('md heading', $mdHtml, '<h1>Hello</h1>');
+expectContains('md strong', $mdHtml, '<strong>bold</strong>');
+expectContains('md link', $mdHtml, 'href="https://example.com"');
+expectContains('md list', $mdHtml, '<ul>');
+
+$builtinId = CmsRepository::ensureBuiltinSource();
+expect('builtin source id', $builtinId > 0, true);
+$slugs = array_column(BlockTypeRepository::all(), 'slug');
+expect('cms_entry block', in_array('cms_entry', $slugs, true), true);
+expect('cms_list block', in_array('cms_list', $slugs, true), true);
+$tplSlugs = array_column(TemplateRepository::all(), 'slug');
+expect('post template', in_array('post', $tplSlugs, true), true);
+
+$post = PostRepository::save([
+    'title' => 'Launch notes',
+    'slug' => 'launch-notes',
+    'status' => 'published',
+    'body_markdown' => "## Why it matters\n\nShip **static** HTML with SEO.\n\n![Hero](uploads/hero.jpg)",
+    'excerpt' => 'How Sneeze publishes posts.',
+    'author_name' => 'Ada',
+    'categories' => ['news'],
+    'tags' => ['seo', 'ai'],
+    'seo_title' => 'Launch notes | Sneeze',
+    'seo_description' => 'SEO friendly launch notes for AI and search.',
+    'featured_image' => 'uploads/hero.jpg',
+]);
+expect('post saved', $post['slug'], 'launch-notes');
+expectContains('post html from md', $post['body_html'], '<h2>Why it matters</h2>');
+$entries = CmsRepository::entries($builtinId);
+expect('builtin cache entry', count($entries) >= 1, true);
+$synced = (new CmsAdapter())->sync(CmsRepository::get($builtinId));
+expect('builtin sync fetched', $synced['fetched'] >= 1, true);
 
 $siteRoot = $installDir . '/site';
 mkdir($siteRoot, 0755, true);
@@ -209,6 +249,56 @@ $written = file_get_contents($siteRoot . '/index.html') ?: '';
 expectContains('written hero', $written, 'How it works');
 expectContains('published minified', $written, ':root{');
 expect('published no script', str_contains($written, '<script'), false);
+expect('sitemap written', is_file($siteRoot . '/sitemap.xml'), true);
+expect('feed written', is_file($siteRoot . '/feed.xml'), true);
+
+$postsPublish = (new Publisher())->publishPosts(0);
+expect('post file written', is_file($siteRoot . '/posts/launch-notes.html'), true);
+expect('post index written', is_file($siteRoot . '/posts/index.html'), true);
+$postHtml = file_get_contents($siteRoot . '/posts/launch-notes.html') ?: '';
+expectContains('post json-ld', $postHtml, 'BlogPosting');
+expectContains('post og title', $postHtml, 'property="og:title"');
+expectContains('post twitter card', $postHtml, 'twitter:card');
+expectContains('post canonical', $postHtml, 'rel="canonical"');
+expectContains('post article body', $postHtml, 'Why it matters');
+$sitemap = file_get_contents($siteRoot . '/sitemap.xml') ?: '';
+expectContains('sitemap has post', $sitemap, 'posts/launch-notes.html');
+$feed = file_get_contents($siteRoot . '/feed.xml') ?: '';
+expectContains('rss item', $feed, 'Launch notes');
+
+$listType = null;
+foreach (BlockTypeRepository::all() as $type) {
+    if ($type['slug'] === 'cms_list') {
+        $listType = $type;
+        break;
+    }
+}
+$listPreview = (new Compiler())->compileDraft(
+    [
+        'id' => $home['id'],
+        'title' => 'Home',
+        'slug' => 'index',
+        'seo_title' => 'Home',
+        'seo_description' => '',
+        'header_mode' => 'none',
+        'footer_mode' => 'none',
+        'custom_css' => '',
+        'custom_js' => '',
+    ],
+    TemplateRepository::get((int) $home['template_id']),
+    [[
+        'id' => -10,
+        'block_type_id' => $listType['id'],
+        'block_type' => $listType,
+        'slot' => 'content',
+        'cms_source_id' => $builtinId,
+        'cms_entry_key' => null,
+        'data' => ['heading' => 'From CMS', 'limit' => 5],
+        'children' => [],
+    ]],
+    false
+);
+expectContains('cms list renders entry', $listPreview, 'Launch notes');
 
 $withJs = (new Compiler())->compilePage((int) $home['id'], false, [
     'custom_js' => "const greet = (name: string): string => `ok`;\nconsole.log(greet('a'));\n",

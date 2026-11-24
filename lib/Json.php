@@ -26,4 +26,13 @@ class Json
         $decoded = self::decode($value, []);
         return is_array($decoded) ? $decoded : [];
     }
+
+    public static function decodeArray(mixed $value): array
+    {
+        $decoded = self::decode($value, []);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        return array_is_list($decoded) ? $decoded : array_values($decoded);
+    }
 }

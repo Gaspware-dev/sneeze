@@ -164,6 +164,10 @@ class Compiler
                 $node['block_type_id'] = $typeId;
                 $node['slot'] = $node['slot'] ?? 'content';
                 $node['data'] = is_array($node['data'] ?? null) ? $node['data'] : [];
+                $node['cms_source_id'] = isset($node['cms_source_id']) && $node['cms_source_id'] !== '' && $node['cms_source_id'] !== null
+                    ? (int) $node['cms_source_id']
+                    : null;
+                $node['cms_entry_key'] = $node['cms_entry_key'] ?? null;
                 $node['children'] = $walk($node['children'] ?? []);
                 $out[] = $node;
             }
@@ -221,6 +225,29 @@ class Compiler
         return $webBase . ltrim($file, '/');
     }
 
+    public static function postUrl(string $slug, ?string $webBase = null): string
+    {
+        $webBase = $webBase ?? Config::siteWebBase();
+        $file = 'posts/' . trim($slug, '/') . '.html';
+        if ($webBase === '/') {
+            return $file;
+        }
+        return $webBase . ltrim($file, '/');
+    }
+
+    public static function absoluteUrl(string $relative, ?string $webBase = null): string
+    {
+        $webBase = $webBase ?? Config::siteWebBase();
+        $relative = ltrim(str_replace('\\', '/', $relative), '/');
+        if (preg_match('#^https?://#i', $relative)) {
+            return $relative;
+        }
+        if ($webBase === '/') {
+            return '/' . $relative;
+        }
+        return rtrim($webBase, '/') . '/' . $relative;
+    }
+
     public static function outputPath(string $slug): string
     {
         $slug = trim($slug, '/');
@@ -230,72 +257,401 @@ class Compiler
         return $slug . '.html';
     }
 
-    private function renderBlocks(array $blocks, string $slot, bool $preview): string
+    public function compilePost(array $post, bool $preview = false): string
     {
-        $html = '';
+        $template = $this->postTemplate();
+        $page = $this->postAsPageContext($post);
+        $context = $this->siteContext($page);
+        $context['site']['feed_url'] = self::absoluteUrl('feed.xml');
+        $context['page'] = array_merge($context['page'], $page['seo_extra'] ?? []);
+        $article = $this->renderPostArticle($post);
+        $context['_slots'] = ['content' => $article];
+
+        $html = $this->interpolator->render($template['html'], $context);
+        $html = $this->injectChrome($html, $page, $context);
+        $fakePage = [
+            'custom_css' => '',
+            'custom_js' => '',
+            'disabled_stylesheet_ids' => [],
+            'disabled_script_ids' => [],
+            'slug' => 'posts/' . $post['slug'],
+        ];
+        $assets = $this->collectAssets($template, [], $fakePage);
+        $assets['css'] .= "\n" . ($template['css'] ?? '');
+        $assets = $this->compileLanguages($html, $assets);
+        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
+        $html = MediaStore::applyToDocument($html, $preview, 'posts/' . $post['slug']);
+        return $html;
+    }
+
+    public function compilePostIndex(array $posts, bool $preview = false): string
+    {
+        $template = $this->postTemplate();
+        $page = [
+            'id' => null,
+            'title' => 'Posts',
+            'slug' => 'posts/index',
+            'seo_title' => 'Posts — ' . Config::get('site_title', 'Sneeze'),
+            'seo_description' => 'News and articles from ' . Config::get('site_title', 'Sneeze'),
+            'header_mode' => 'inherit',
+            'footer_mode' => 'inherit',
+            'header_html' => '',
+            'footer_html' => '',
+            'seo_extra' => [
+                'robots' => 'index,follow',
+                'canonical' => self::absoluteUrl('posts/index.html'),
+                'og_image' => '',
+                'json_ld' => Json::encode([
+                    '@context' => 'https://schema.org',
+                    '@type' => 'CollectionPage',
+                    'name' => 'Posts',
+                    'url' => self::absoluteUrl('posts/index.html'),
+                ]),
+            ],
+        ];
+        $context = $this->siteContext($page);
+        $context['site']['feed_url'] = self::absoluteUrl('feed.xml');
+        $context['page'] = array_merge($context['page'], $page['seo_extra']);
+        $items = '';
+        foreach ($posts as $post) {
+            $url = htmlspecialchars(self::postUrl((string) $post['slug']), ENT_QUOTES, 'UTF-8');
+            $title = htmlspecialchars((string) $post['title'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $excerpt = htmlspecialchars((string) ($post['excerpt'] ?: strip_tags((string) $post['body_html'])), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            if (strlen($excerpt) > 220) {
+                $excerpt = substr($excerpt, 0, 217) . '…';
+            }
+            $date = htmlspecialchars((string) ($post['published_at'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $items .= '<article class="post-list__item"><h2><a href="' . $url . '">' . $title . '</a></h2>'
+                . ($date !== '' ? '<p><time datetime="' . $date . '">' . $date . '</time></p>' : '')
+                . ($excerpt !== '' ? '<p>' . $excerpt . '</p>' : '')
+                . '</article>';
+        }
+        $content = '<section class="post-list wrap"><h1>Posts</h1><div class="post-list__items">' . $items . '</div></section>';
+        $context['_slots'] = ['content' => $content];
+        $html = $this->interpolator->render($template['html'], $context);
+        $html = $this->injectChrome($html, $page, $context);
+        $fakePage = [
+            'custom_css' => '',
+            'custom_js' => '',
+            'disabled_stylesheet_ids' => [],
+            'disabled_script_ids' => [],
+            'slug' => 'posts/index',
+        ];
+        $assets = $this->collectAssets($template, [], $fakePage);
+        $assets['css'] .= "\n" . ($template['css'] ?? '');
+        $assets = $this->compileLanguages($html, $assets);
+        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
+        return MediaStore::applyToDocument($html, $preview, 'posts/index');
+    }
+
+    public function compileRss(array $posts): string
+    {
+        $siteTitle = htmlspecialchars((string) Config::get('site_title', 'Sneeze'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $home = htmlspecialchars(self::absoluteUrl('index.html'), ENT_QUOTES, 'UTF-8');
+        $feed = htmlspecialchars(self::absoluteUrl('feed.xml'), ENT_QUOTES, 'UTF-8');
+        $items = '';
+        foreach ($posts as $post) {
+            $title = htmlspecialchars((string) $post['title'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $link = htmlspecialchars(self::absoluteUrl(self::postUrl((string) $post['slug'])), ENT_QUOTES, 'UTF-8');
+            $desc = htmlspecialchars((string) ($post['seo_description'] ?: $post['excerpt']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $date = date('c', strtotime((string) ($post['published_at'] ?: $post['updated_at'] ?: 'now')) ?: time());
+            $guid = $link;
+            $items .= "<item>\n<title>{$title}</title>\n<link>{$link}</link>\n<guid>{$guid}</guid>\n"
+                . "<pubDate>" . htmlspecialchars(date('D, d M Y H:i:s O', strtotime($date) ?: time()), ENT_QUOTES, 'UTF-8') . "</pubDate>\n"
+                . "<description>{$desc}</description>\n</item>\n";
+        }
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            . "<rss version=\"2.0\">\n<channel>\n<title>{$siteTitle}</title>\n<link>{$home}</link>\n"
+            . "<description>Posts from {$siteTitle}</description>\n"
+            . "<atom:link xmlns:atom=\"http://www.w3.org/2005/Atom\" href=\"{$feed}\" rel=\"self\" type=\"application/rss+xml\"/>\n"
+            . $items
+            . "</channel>\n</rss>\n";
+    }
+
+    public function compileSitemap(array $pages, array $posts): string
+    {
+        $urls = [];
+        foreach ($pages as $page) {
+            $urls[] = [
+                'loc' => self::absoluteUrl(self::pageUrl((string) $page['slug'])),
+                'lastmod' => substr((string) ($page['updated_at'] ?? date('Y-m-d')), 0, 10),
+            ];
+        }
+        $urls[] = [
+            'loc' => self::absoluteUrl('posts/index.html'),
+            'lastmod' => date('Y-m-d'),
+        ];
+        foreach ($posts as $post) {
+            $urls[] = [
+                'loc' => self::absoluteUrl(self::postUrl((string) $post['slug'])),
+                'lastmod' => substr((string) ($post['updated_at'] ?? $post['published_at'] ?? date('Y-m-d')), 0, 10),
+            ];
+        }
+        $body = '';
+        foreach ($urls as $url) {
+            $loc = htmlspecialchars($url['loc'], ENT_QUOTES, 'UTF-8');
+            $last = htmlspecialchars($url['lastmod'], ENT_QUOTES, 'UTF-8');
+            $body .= "<url><loc>{$loc}</loc><lastmod>{$last}</lastmod></url>\n";
+        }
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            . "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+            . $body
+            . "</urlset>\n";
+    }
+
+    private function postTemplate(): array
+    {
+        foreach (TemplateRepository::all() as $tpl) {
+            if (($tpl['slug'] ?? '') === 'post') {
+                return TemplateRepository::get((int) $tpl['id']);
+            }
+        }
+        return [
+            'id' => 0,
+            'name' => 'Post',
+            'slug' => 'post',
+            'html' => Seed::postTemplate(),
+            'css' => Seed::postTemplateCss(),
+            'js' => '',
+        ];
+    }
+
+    private function postAsPageContext(array $post): array
+    {
+        $url = self::postUrl((string) $post['slug']);
+        $canonical = trim((string) ($post['canonical_url'] ?? ''));
+        if ($canonical === '') {
+            $canonical = self::absoluteUrl($url);
+        }
+        $seoTitle = trim((string) ($post['seo_title'] ?? '')) ?: (string) $post['title'];
+        $seoDescription = trim((string) ($post['seo_description'] ?? ''))
+            ?: trim((string) ($post['excerpt'] ?? ''))
+            ?: substr(strip_tags((string) ($post['body_html'] ?? '')), 0, 160);
+        $ogImage = trim((string) ($post['og_image'] ?? '')) ?: trim((string) ($post['featured_image'] ?? ''));
+        $jsonLd = [
+            '@context' => 'https://schema.org',
+            '@type' => 'BlogPosting',
+            'headline' => $post['title'],
+            'description' => $seoDescription,
+            'datePublished' => $post['published_at'] ?? $post['created_at'] ?? null,
+            'dateModified' => $post['updated_at'] ?? $post['published_at'] ?? null,
+            'mainEntityOfPage' => [
+                '@type' => 'WebPage',
+                '@id' => $canonical,
+            ],
+            'author' => [
+                '@type' => 'Person',
+                'name' => $post['author_name'] ?: Config::get('site_title', 'Sneeze'),
+            ],
+        ];
+        if (!empty($post['author_url'])) {
+            $jsonLd['author']['url'] = $post['author_url'];
+        }
+        if ($ogImage !== '') {
+            $jsonLd['image'] = [self::absoluteUrl($ogImage)];
+        }
+        if (!empty($post['tags'])) {
+            $jsonLd['keywords'] = implode(', ', $post['tags']);
+        }
+
+        return [
+            'id' => $post['id'] ?? null,
+            'title' => $post['title'],
+            'slug' => 'posts/' . $post['slug'],
+            'seo_title' => $seoTitle,
+            'seo_description' => $seoDescription,
+            'header_mode' => 'inherit',
+            'footer_mode' => 'inherit',
+            'header_html' => '',
+            'footer_html' => '',
+            'seo_extra' => [
+                'robots' => $post['robots'] ?: 'index,follow',
+                'canonical' => $canonical,
+                'og_image' => $ogImage !== '' ? self::absoluteUrl($ogImage) : '',
+                'json_ld' => Json::encode($jsonLd),
+            ],
+        ];
+    }
+
+    private function renderPostArticle(array $post): string
+    {
+        $title = htmlspecialchars((string) $post['title'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $excerpt = trim((string) ($post['excerpt'] ?? ''));
+        $author = trim((string) ($post['author_name'] ?? ''));
+        $date = (string) ($post['published_at'] ?? '');
+        $image = trim((string) ($post['featured_image'] ?? ''));
+        $body = (string) ($post['body_html'] ?? '');
+        $meta = [];
+        if ($author !== '') {
+            $meta[] = htmlspecialchars($author, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+        if ($date !== '') {
+            $meta[] = '<time datetime="' . htmlspecialchars($date, ENT_QUOTES, 'UTF-8') . '">'
+                . htmlspecialchars($date, ENT_QUOTES, 'UTF-8') . '</time>';
+        }
+        $tax = [];
+        foreach ($post['categories'] ?? [] as $cat) {
+            $tax[] = htmlspecialchars((string) $cat, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+        foreach ($post['tags'] ?? [] as $tag) {
+            $tax[] = '#' . htmlspecialchars((string) $tag, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+
+        $html = '<article class="post-article wrap" itemscope itemtype="https://schema.org/BlogPosting">';
+        $html .= '<header class="post-article__header"><h1 itemprop="headline">' . $title . '</h1>';
+        if ($excerpt !== '') {
+            $html .= '<p class="lede" itemprop="description">' . htmlspecialchars($excerpt, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p>';
+        }
+        if ($meta) {
+            $html .= '<p class="post-article__meta">' . implode(' · ', $meta) . '</p>';
+        }
+        $html .= '</header>';
+        if ($image !== '') {
+            $html .= '<figure class="post-article__hero"><img src="'
+                . htmlspecialchars($image, ENT_QUOTES, 'UTF-8')
+                . '" alt="" itemprop="image" loading="eager" decoding="async"></figure>';
+        }
+        $html .= '<div class="prose post-article__body" itemprop="articleBody">' . $body . '</div>';
+        if ($tax) {
+            $html .= '<p class="post-article__tax">' . implode(' · ', $tax) . '</p>';
+        }
+        $html .= '</article>';
+        return $html;
+    }
+
+    private function renderBlocks(array $blocks, string $slot, bool $preview, int|string $parentId = 0): string
+    {
+        $matched = [];
         foreach ($blocks as $block) {
             if (($block['slot'] ?? 'content') !== $slot) {
                 continue;
             }
-            $html .= $this->renderBlock($block, $preview);
+            $matched[] = $block;
         }
-        if ($preview && $html === '') {
-            $html = '<div class="sneeze-dropzone" data-sneeze-slot="' . htmlspecialchars($slot) . '">Add a block</div>';
+        if ($preview && $matched === []) {
+            return $this->dropzoneHtml($parentId, $slot, 0, 'Add a block');
+        }
+
+        $html = '';
+        foreach ($matched as $index => $block) {
+            if ($preview) {
+                $html .= $this->dropzoneHtml($parentId, $slot, $index, '');
+            }
+            $html .= $this->renderBlock($block, $preview, $parentId, $slot, $index);
+        }
+        if ($preview) {
+            $html .= $this->dropzoneHtml($parentId, $slot, count($matched), '');
         }
         return $html;
     }
 
-    private function renderBlock(array $block, bool $preview): string
+    private function dropzoneHtml(int|string $parentId, string $slot, int $index, string $label): string
+    {
+        $labelAttr = $label !== '' ? htmlspecialchars($label, ENT_QUOTES, 'UTF-8') : 'Drop here';
+        $cls = $label !== '' ? 'sneeze-dropzone' : 'sneeze-dropzone sneeze-dropzone--slim';
+        return '<div class="' . $cls . '" data-sneeze-parent="' . htmlspecialchars((string) $parentId, ENT_QUOTES, 'UTF-8')
+            . '" data-sneeze-slot="' . htmlspecialchars($slot, ENT_QUOTES, 'UTF-8')
+            . '" data-sneeze-index="' . $index . '">' . $labelAttr . '</div>';
+    }
+
+    private function renderBlock(array $block, bool $preview, int|string $parentId = 0, string $slot = 'content', int $index = 0): string
     {
         $type = $block['block_type'] ?? null;
         if (!$type) {
             return '';
         }
+        $blockId = $block['id'] ?? 0;
         $children = $block['children'] ?? [];
         $schemaSlots = $type['schema']['slots'] ?? [];
         $slots = [];
         if (is_array($schemaSlots)) {
             foreach ($schemaSlots as $name) {
-                $slots[(string) $name] = $this->renderChildSlot($children, (string) $name, $preview);
+                $slots[(string) $name] = $this->renderBlocks($children, (string) $name, $preview, $blockId);
             }
         }
         foreach ($children as $child) {
             $name = (string) ($child['slot'] ?? 'content');
             if (!array_key_exists($name, $slots)) {
-                $slots[$name] = $this->renderChildSlot($children, $name, $preview);
+                $slots[$name] = $this->renderBlocks($children, $name, $preview, $blockId);
             }
         }
 
         $data = is_array($block['data'] ?? null) ? $block['data'] : [];
-        $data = $this->prepareData($type, $data);
+        if (($type['slug'] ?? '') === 'cms_list') {
+            $data = $this->resolveCmsListData($block, $data);
+        }
+        $data = $this->prepareData($type, $data, $preview);
         $data['_slots'] = $slots;
 
-        $inner = $this->interpolator->render((string) ($type['html'] ?? ''), $data);
+        $templateHtml = (string) ($type['html'] ?? '');
+        if ($preview) {
+            $templateHtml = $this->previewEditableTemplate($templateHtml, $type);
+        }
+        $inner = $this->interpolator->render($templateHtml, $data);
         if (!$preview) {
             return $inner;
         }
 
-        $id = (int) ($block['id'] ?? 0);
+        $id = htmlspecialchars((string) $blockId, ENT_QUOTES, 'UTF-8');
         $slug = htmlspecialchars((string) ($type['slug'] ?? ''), ENT_QUOTES, 'UTF-8');
-        return '<div class="sneeze-block" data-sneeze-block="' . $id . '" data-sneeze-type="' . $slug . '">' . $inner . '</div>';
+        $parentAttr = htmlspecialchars((string) $parentId, ENT_QUOTES, 'UTF-8');
+        $slotAttr = htmlspecialchars($slot, ENT_QUOTES, 'UTF-8');
+        return '<div class="sneeze-block" draggable="true" data-sneeze-block="' . $id
+            . '" data-sneeze-type="' . $slug
+            . '" data-sneeze-parent="' . $parentAttr
+            . '" data-sneeze-slot="' . $slotAttr
+            . '" data-sneeze-index="' . $index . '">' . $inner . '</div>';
     }
 
-    private function renderChildSlot(array $children, string $slot, bool $preview): string
+    private function resolveCmsListData(array $block, array $data): array
     {
-        $html = '';
-        foreach ($children as $child) {
-            if (($child['slot'] ?? 'content') !== $slot) {
-                continue;
+        $sourceId = (int) ($block['cms_source_id'] ?? $data['cms_source_id'] ?? 0);
+        if ($sourceId < 1) {
+            $data['items'] = [];
+            return $data;
+        }
+        $limit = (int) ($data['limit'] ?? 10);
+        if ($limit < 1) {
+            $limit = 10;
+        }
+        if ($limit > 100) {
+            $limit = 100;
+        }
+        $tag = trim((string) ($data['tag'] ?? ''));
+        $category = trim((string) ($data['category'] ?? ''));
+        $items = [];
+        foreach (CmsRepository::entries($sourceId) as $entry) {
+            $row = is_array($entry['data'] ?? null) ? $entry['data'] : [];
+            $row['id'] = $entry['external_id'];
+            $row['url'] = $row['url'] ?? ('posts/' . ($row['slug'] ?? $entry['external_id']) . '.html');
+            if ($tag !== '') {
+                $tags = $row['tags'] ?? [];
+                if (is_string($tags)) {
+                    $tags = array_map('trim', explode(',', $tags));
+                }
+                if (!is_array($tags) || !in_array($tag, $tags, true)) {
+                    continue;
+                }
             }
-            $html .= $this->renderBlock($child, $preview);
+            if ($category !== '') {
+                $cats = $row['categories'] ?? [];
+                if (is_string($cats)) {
+                    $cats = array_map('trim', explode(',', $cats));
+                }
+                if (!is_array($cats) || !in_array($category, $cats, true)) {
+                    continue;
+                }
+            }
+            $items[] = $row;
+            if (count($items) >= $limit) {
+                break;
+            }
         }
-        if ($preview && $html === '') {
-            $html = '<div class="sneeze-dropzone" data-sneeze-slot="' . htmlspecialchars($slot) . '">Drop in ' . htmlspecialchars($slot) . '</div>';
-        }
-        return $html;
+        $data['items'] = $items;
+        return $data;
     }
 
-    private function prepareData(array $type, array $data): array
+    private function prepareData(array $type, array $data, bool $preview = false): array
     {
         if (($type['slug'] ?? '') === 'heading') {
             $level = strtolower((string) ($data['level'] ?? 'h2'));
@@ -303,12 +659,68 @@ class Compiler
                 $level = 'h2';
             }
             $text = htmlspecialchars((string) ($data['text'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            if ($preview) {
+                $text = '<span class="sneeze-editable" contenteditable="true" data-sneeze-field="text">' . $text . '</span>';
+            }
             $data['heading_html'] = '<' . $level . '>' . $text . '</' . $level . '>';
         }
         if (($type['slug'] ?? '') === 'spacer' && empty($data['height'])) {
             $data['height'] = 48;
         }
+        if ($preview) {
+            $data = $this->wrapEditableFields($type, $data);
+        }
         return $data;
+    }
+
+    private function wrapEditableFields(array $type, array $data): array
+    {
+        foreach ($type['schema']['fields'] ?? [] as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $name = (string) ($field['name'] ?? '');
+            $kind = (string) ($field['type'] ?? 'text');
+            if ($name === '' || !in_array($kind, ['text', 'textarea', 'richtext'], true)) {
+                continue;
+            }
+            if (($type['slug'] ?? '') === 'heading' && $name === 'text') {
+                continue;
+            }
+            $raw = (string) ($data[$name] ?? '');
+            if ($kind === 'richtext') {
+                $data[$name] = '<div class="sneeze-editable sneeze-editable--rich" contenteditable="true" data-sneeze-field="'
+                    . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '" data-sneeze-rich="1">' . $raw . '</div>';
+            } else {
+                $data[$name] = '<span class="sneeze-editable" contenteditable="true" data-sneeze-field="'
+                    . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '">'
+                    . htmlspecialchars($raw, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</span>';
+            }
+        }
+        return $data;
+    }
+
+    private function previewEditableTemplate(string $html, array $type): string
+    {
+        foreach ($type['schema']['fields'] ?? [] as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $name = (string) ($field['name'] ?? '');
+            $kind = (string) ($field['type'] ?? 'text');
+            if ($name === '' || !in_array($kind, ['text', 'textarea'], true)) {
+                continue;
+            }
+            if (($type['slug'] ?? '') === 'heading' && $name === 'text') {
+                continue;
+            }
+            $html = preg_replace(
+                '/\{\{\s*' . preg_quote($name, '/') . '\s*\}\}/',
+                '{{{' . $name . '}}}',
+                $html
+            ) ?? $html;
+        }
+        return $html;
     }
 
     private function collectAssets(array $template, array $blocks, array $page): array
@@ -477,9 +889,10 @@ class Compiler
     {
         $chrome = <<<'HTML'
 <style>
-.sneeze-block { position: relative; outline: 1px solid transparent; cursor: pointer; }
+.sneeze-block { position: relative; outline: 1px solid transparent; cursor: grab; }
 .sneeze-block:hover { outline: 1px dashed #d04c4c; outline-offset: 2px; }
 .sneeze-block.is-selected { outline: 2px solid #d04c4c; outline-offset: 2px; }
+.sneeze-block.is-dragging { opacity: .45; }
 .sneeze-dropzone {
   border: 1px dashed rgba(208,76,76,.45);
   color: #8f3333;
@@ -489,10 +902,43 @@ class Compiler
   font: 600 13px system-ui, sans-serif;
   background: rgba(208,76,76,.06);
   margin: .35rem 0;
+  min-height: 1.5rem;
+  transition: background .15s, padding .15s, border-color .15s;
 }
+.sneeze-dropzone--slim {
+  padding: 0;
+  min-height: 8px;
+  border-color: transparent;
+  background: transparent;
+  color: transparent;
+  font-size: 0;
+  margin: 0;
+}
+.sneeze-dropzone.is-over,
+.sneeze-dropzone--slim.is-over {
+  border-color: rgba(208,76,76,.7);
+  background: rgba(208,76,76,.14);
+  padding: .65rem;
+  min-height: 1.5rem;
+  color: #8f3333;
+  font-size: 12px;
+}
+.sneeze-editable {
+  outline: 1px dashed transparent;
+  border-radius: 2px;
+  min-width: .75em;
+  cursor: text;
+}
+.sneeze-editable:hover,
+.sneeze-editable:focus {
+  outline-color: rgba(208,76,76,.55);
+  background: rgba(208,76,76,.06);
+}
+.sneeze-editable--rich { display: block; }
 </style>
 <script>
 (function () {
+  var dragId = null;
   function select(id) {
     document.querySelectorAll(".sneeze-block.is-selected").forEach(function (el) {
       el.classList.remove("is-selected");
@@ -504,7 +950,34 @@ class Compiler
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }
+  function clearOver() {
+    document.querySelectorAll(".sneeze-dropzone.is-over").forEach(function (el) {
+      el.classList.remove("is-over");
+    });
+  }
+  function emitEdit(fieldEl) {
+    var block = fieldEl.closest("[data-sneeze-block]");
+    if (!block) return;
+    var rich = fieldEl.getAttribute("data-sneeze-rich") === "1";
+    parent.postMessage({
+      type: "sneeze:edit",
+      id: block.getAttribute("data-sneeze-block"),
+      field: fieldEl.getAttribute("data-sneeze-field"),
+      value: rich ? fieldEl.innerHTML : (fieldEl.textContent || "")
+    }, "*");
+  }
   document.addEventListener("click", function (e) {
+    var field = e.target.closest(".sneeze-editable");
+    if (field) {
+      e.stopPropagation();
+      var block = field.closest("[data-sneeze-block]");
+      if (block) {
+        var id = block.getAttribute("data-sneeze-block");
+        select(id);
+        parent.postMessage({ type: "sneeze:select", id: id }, "*");
+      }
+      return;
+    }
     var el = e.target.closest("[data-sneeze-block]");
     if (!el) return;
     e.preventDefault();
@@ -512,6 +985,84 @@ class Compiler
     var id = el.getAttribute("data-sneeze-block");
     select(id);
     parent.postMessage({ type: "sneeze:select", id: id }, "*");
+  }, true);
+  document.addEventListener("focusin", function (e) {
+    var field = e.target.closest(".sneeze-editable");
+    if (!field) return;
+    var block = field.closest("[data-sneeze-block]");
+    if (block) block.setAttribute("draggable", "false");
+  }, true);
+  document.addEventListener("focusout", function (e) {
+    var field = e.target.closest(".sneeze-editable");
+    if (!field) return;
+    var block = field.closest("[data-sneeze-block]");
+    if (block) block.setAttribute("draggable", "true");
+    emitEdit(field);
+  }, true);
+  document.addEventListener("input", function (e) {
+    var field = e.target.closest(".sneeze-editable");
+    if (!field) return;
+    emitEdit(field);
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    var block = e.target.closest("[data-sneeze-block]");
+    if (!block || e.target.closest(".sneeze-editable")) {
+      e.preventDefault();
+      return;
+    }
+    dragId = block.getAttribute("data-sneeze-block");
+    block.classList.add("is-dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-sneeze-block", dragId);
+    e.dataTransfer.setData("text/plain", dragId);
+  }, true);
+  document.addEventListener("dragend", function () {
+    document.querySelectorAll(".sneeze-block.is-dragging").forEach(function (el) {
+      el.classList.remove("is-dragging");
+    });
+    clearOver();
+    dragId = null;
+  }, true);
+  document.addEventListener("dragover", function (e) {
+    var zone = e.target.closest(".sneeze-dropzone");
+    if (!zone) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.dataTransfer.types.indexOf("application/x-sneeze-type") >= 0 ? "copy" : "move";
+    clearOver();
+    zone.classList.add("is-over");
+  }, true);
+  document.addEventListener("dragleave", function (e) {
+    var zone = e.target.closest(".sneeze-dropzone");
+    if (zone) zone.classList.remove("is-over");
+  }, true);
+  document.addEventListener("drop", function (e) {
+    var zone = e.target.closest(".sneeze-dropzone");
+    if (!zone) return;
+    e.preventDefault();
+    clearOver();
+    var parentId = zone.getAttribute("data-sneeze-parent") || "0";
+    var slot = zone.getAttribute("data-sneeze-slot") || "content";
+    var index = Number(zone.getAttribute("data-sneeze-index") || "0");
+    var typeId = e.dataTransfer.getData("application/x-sneeze-type");
+    if (typeId) {
+      parent.postMessage({
+        type: "sneeze:add",
+        typeId: typeId,
+        parentId: parentId,
+        slot: slot,
+        index: index
+      }, "*");
+      return;
+    }
+    var id = e.dataTransfer.getData("application/x-sneeze-block") || dragId;
+    if (!id) return;
+    parent.postMessage({
+      type: "sneeze:drop",
+      id: id,
+      parentId: parentId,
+      slot: slot,
+      index: index
+    }, "*");
   }, true);
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.type !== "sneeze:highlight") return;

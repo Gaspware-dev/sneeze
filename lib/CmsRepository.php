@@ -45,6 +45,13 @@ class CmsRepository
 
         if (!empty($body['id'])) {
             $id = (int) $body['id'];
+            $existing = self::get($id);
+            if (($existing['adapter'] ?? '') === 'builtin_posts') {
+                Database::pdo()->prepare(
+                    "UPDATE cms_sources SET name = ?, updated_at = datetime('now') WHERE id = ?"
+                )->execute([$name, $id]);
+                return self::get($id);
+            }
             Database::pdo()->prepare(
                 'UPDATE cms_sources SET name = ?, adapter = ?, config_json = ?, updated_at = datetime(\'now\') WHERE id = ?'
             )->execute([$name, $adapter, $json, $id]);
@@ -59,7 +66,47 @@ class CmsRepository
 
     public static function delete(int $id): void
     {
+        $source = self::get($id);
+        if (($source['adapter'] ?? '') === 'builtin_posts') {
+            Response::error('Cannot delete the built-in posts source');
+        }
         Database::pdo()->prepare('DELETE FROM cms_sources WHERE id = ?')->execute([$id]);
+    }
+
+    public static function builtinSourceId(): ?int
+    {
+        $stmt = Database::pdo()->prepare("SELECT id FROM cms_sources WHERE adapter = 'builtin_posts' LIMIT 1");
+        $stmt->execute();
+        $id = $stmt->fetchColumn();
+        return $id === false ? null : (int) $id;
+    }
+
+    public static function ensureBuiltinSource(): int
+    {
+        $existing = self::builtinSourceId();
+        if ($existing) {
+            return $existing;
+        }
+        Database::pdo()->prepare(
+            "INSERT INTO cms_sources (name, adapter, config_json) VALUES ('Built-in posts', 'builtin_posts', '{}')"
+        )->execute();
+        return (int) Database::pdo()->lastInsertId();
+    }
+
+    public static function entry(int $sourceId, string $externalId): ?array
+    {
+        $stmt = Database::pdo()->prepare(
+            'SELECT * FROM cms_entries WHERE source_id = ? AND external_id = ?'
+        );
+        $stmt->execute([$sourceId, $externalId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+        $row['id'] = (int) $row['id'];
+        $row['data'] = Json::object($row['data_json'] ?? '{}');
+        unset($row['data_json']);
+        return $row;
     }
 
     public static function entries(int $sourceId): array

@@ -51,6 +51,18 @@ php -m | grep -iE 'sqlite|dom|zip'
 
 Optional: `php8.3-gd` for upload thumbnails.
 
+## Docker (rapid testing)
+
+The included `Dockerfile` copies Sneeze into `/sneeze/` under Apache’s document root so the public site is served from `/` and the studio from `/sneeze/` — the same drop-in layout as a real install.
+
+```bash
+docker compose up --build
+# Studio:  http://localhost:8080/sneeze/
+# Site:    http://localhost:8080/  (after Publish)
+```
+
+During setup, choose site folder `/var/www/html`, public URL path `/`, and asset folder `uploads`. `docker compose` bind-mounts the repo over `/var/www/html/sneeze` so code changes apply without rebuilding.
+
 ## Local development
 
 PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside the `sneeze/` folder), then start the server from there:
@@ -102,6 +114,7 @@ return true;
 - **Drop-in subfolder** — does not take over site serving
 - **Versioned updates** — Settings → Update Sneeze accepts a GitHub **Code → Download ZIP**; `data/` is preserved
 - **Studio** — live preview on the left; blocks, writing, and code on the right
+- **Preview DnD & inline edit** — drag blocks in the iframe; edit text fields in place
 - **Templates & blocks** — stored in SQLite, including HTML/CSS/JS for each definition
 - **Site chrome** — sitewide header/footer in Design; pages can inherit, override, or hide them
 - **Design tokens** — JSON tokens compile to `:root` CSS variables and are inlined on publish
@@ -110,7 +123,9 @@ return true;
 - **Backup on publish** — previous files copied to `sneeze/data/backups/`
 - **Media library** — studio uploads stay in `sneeze/data/uploads` until publish copies used files into the site asset folder
 - **HTML import** — turn an existing page into a template + HTML block
-- **CMS cache** — fetch JSON from a headless CMS in the admin; visitors never call it
+- **Built-in posts CMS** — Markdown posts with author, taxonomy, and SEO; publish to `posts/`, RSS, and sitemap
+- **CMS cache** — built-in posts plus remote JSON sources; bind entries into blocks (`cms_entry` / `cms_list`); visitors never call a CMS
+- **SEO / AI presentation** — Open Graph, Twitter cards, JSON-LD `BlogPosting`, canonical/robots, semantic article HTML
 - **Users** — admin and editor roles
 - **TypeScript** — page/block/global scripts compile to JS on preview and publish
 - **Tailwind CSS** — utility classes in HTML (and `@apply` in CSS) compile against `tailwind.config.ts` and design tokens

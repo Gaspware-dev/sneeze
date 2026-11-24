@@ -59,7 +59,8 @@ All creative artifacts live in SQLite (`data/sneeze.db`).
 - **design_tokens** — JSON map flattened to CSS custom properties.
 - **toolchain** — TypeScript and Tailwind toggles plus stored `tailwind.config.ts` (theme colors also come from design tokens).
 - **page_revisions** — HTML snapshot on each publish.
-- **cms_sources** / **cms_entries** — adapter config + cached payloads.
+- **cms_sources** / **cms_entries** — adapter config + cached payloads (includes built-in posts source).
+- **cms_posts** — Markdown posts with SEO fields; sync into `cms_entries` when published.
 - Existing **users**, **media**, **audit_log**, **login_attempts**.
 
 Filesystem: published HTML lands in the site root. Binary media is uploaded into **`sneeze/data/uploads`** (studio-only). On publish, files actually used on the page are copied into the configurable site **asset folder** (`uploads/` by default). Metadata stays in SQLite.
@@ -94,14 +95,24 @@ Template language (intentionally small, no Composer):
 
 ## Headless CMS (cached)
 
-Visitors never talk to a CMS. Editors configure a source in the admin and click **Sync**:
+Visitors never talk to a CMS. Content lands in SQLite (`cms_entries`), then binds into blocks or publishes as static files.
+
+**Built-in posts:** Editors write Markdown posts in the CMS workspace (title, excerpt, featured image, author, categories/tags, SEO). Saving a published post syncs into the built-in `builtin_posts` source. **Publish posts** writes `posts/{slug}.html`, `posts/index.html`, `feed.xml`, and `sitemap.xml` with Open Graph, Twitter cards, and JSON-LD `BlogPosting`.
+
+**Remote sources:** Admins configure an HTTP JSON source and click **Sync**:
 
 1. Adapter fetches remote JSON (HTTP JSON in this phase).
 2. Entries are stored in `cms_entries` (cache).
-3. Page blocks can bind `cms_source_id` + `cms_entry_key`; on sync, mapped fields overwrite that block’s `data_json`.
-4. The page is still a **draft** until someone publishes.
+3. Page blocks bind `cms_source_id` + `cms_entry_key` in the Write tab; on sync, mapped fields overwrite that block’s `data_json`.
+4. `cms_entry` / `cms_list` system blocks render single entries or filtered lists at compile time.
+5. The page is still a **draft** until someone publishes.
 
-Later adapters (Contentful, Sanity, WordPress REST) implement the same `CmsAdapter` contract: `fetch(config) → entries[]`. Mapping stays in Sneeze so the compile pipeline never changes.
+Later adapters (Contentful, Sanity, WordPress REST) implement the same `CmsAdapter` contract. Mapping stays in Sneeze so the compile pipeline never changes.
+
+## Preview editing
+
+- Blocks are drag-and-drop reorderable in the preview iframe (including palette → dropzone).
+- Text/textarea/richtext fields are contentEditable inline; edits post back to the studio draft.
 
 ---
 
@@ -131,14 +142,13 @@ Later adapters (Contentful, Sanity, WordPress REST) implement the same `CmsAdapt
 
 **Next**
 
-- Drag from preview, inline text editing in the iframe
 - Revision browser / rollback
-- More CMS adapters and field mapping UI polish
+- More remote CMS adapters (Contentful, Sanity, WordPress REST)
 
 **Later**
 
 - Multi-language, scheduled publish, collaborative presence
-- Optional per-page “collection” pages generated from cached CMS lists at publish time (still static files)
+- Cron-style scheduled publish for posts (still static files at emit time)
 
 ---
 

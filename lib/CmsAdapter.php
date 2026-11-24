@@ -7,10 +7,24 @@ class CmsAdapter
     public function sync(array $source): array
     {
         $adapter = $source['adapter'] ?? 'http_json';
+        if ($adapter === 'builtin_posts') {
+            return $this->syncBuiltinPosts($source);
+        }
         if ($adapter !== 'http_json') {
             Response::error('Unknown CMS adapter: ' . $adapter);
         }
         return $this->syncHttpJson($source);
+    }
+
+    private function syncBuiltinPosts(array $source): array
+    {
+        $count = PostRepository::syncAllToCache();
+        return [
+            'ok' => true,
+            'fetched' => $count,
+            'applied' => CmsRepository::applyBindings((int) $source['id']),
+            'entries' => CmsRepository::entries((int) $source['id']),
+        ];
     }
 
     private function syncHttpJson(array $source): array
