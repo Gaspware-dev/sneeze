@@ -1,0 +1,22 @@
+# Rapid local testing: Apache serves / from the container web root and the
+# studio at /sneeze. Bind-mount the repo so code edits are live without rebuild.
+#
+#   docker compose up --build
+#   open http://localhost:8080/sneeze/
+#
+# Setup: choose site folder /var/www/html (parent of sneeze), web base /,
+# asset folder uploads.
+
+services:
+  sneeze:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/var/www/html/sneeze
+      - sneeze-site-uploads:/var/www/html/uploads
+    environment:
+      APACHE_DOCUMENT_ROOT: /var/www/html
+
+volumes:
+  sneeze-site-uploads:

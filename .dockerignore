@@ -1,0 +1,14 @@
+.git
+.gitignore
+data
+**/data
+*.db
+config.json
+.DS_Store
+.cursor
+*.md
+!README.md
+tests
+Dockerfile
+docker-compose.yml
+.dockerignore

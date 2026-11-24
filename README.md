@@ -51,6 +51,18 @@ php -m | grep -iE 'sqlite|dom|zip'
 
 Optional: `php8.3-gd` for upload thumbnails.
 
+## Docker (rapid testing)
+
+The included `Dockerfile` copies Sneeze into `/sneeze/` under Apache’s document root so the public site is served from `/` and the studio from `/sneeze/` — the same drop-in layout as a real install.
+
+```bash
+docker compose up --build
+# Studio:  http://localhost:8080/sneeze/
+# Site:    http://localhost:8080/  (after Publish)
+```
+
+During setup, choose site folder `/var/www/html`, public URL path `/`, and asset folder `uploads`. `docker compose` bind-mounts the repo over `/var/www/html/sneeze` so code changes apply without rebuilding.
+
 ## Local development
 
 PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside the `sneeze/` folder), then start the server from there:
