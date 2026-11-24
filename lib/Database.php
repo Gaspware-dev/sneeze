@@ -223,6 +223,11 @@ SQL);
         if ($version < 4) {
             self::migrateToV4($pdo);
             $pdo->exec('PRAGMA user_version = 4');
+            $version = 4;
+        }
+        if ($version < 5) {
+            self::migrateToV5($pdo);
+            $pdo->exec('PRAGMA user_version = 5');
         }
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
@@ -232,6 +237,9 @@ SQL);
 
         DesignRepository::ensureChrome();
         ToolchainRepository::ensure();
+        CmsRepository::ensureBuiltinSource();
+        Seed::ensureCmsBlocks($pdo);
+        Seed::ensurePostTemplate($pdo);
     }
 
     private static function migrateToV4(PDO $pdo): void
@@ -262,6 +270,34 @@ SQL);
                 $pdo->exec($sql);
             }
         }
+    }
+
+    private static function migrateToV5(PDO $pdo): void
+    {
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS cms_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    body_markdown TEXT NOT NULL DEFAULT '',
+    body_html TEXT NOT NULL DEFAULT '',
+    excerpt TEXT NOT NULL DEFAULT '',
+    featured_image TEXT NOT NULL DEFAULT '',
+    author_name TEXT NOT NULL DEFAULT '',
+    author_url TEXT NOT NULL DEFAULT '',
+    categories_json TEXT NOT NULL DEFAULT '[]',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
+    published_at TEXT,
+    seo_title TEXT NOT NULL DEFAULT '',
+    seo_description TEXT NOT NULL DEFAULT '',
+    og_image TEXT NOT NULL DEFAULT '',
+    canonical_url TEXT NOT NULL DEFAULT '',
+    robots TEXT NOT NULL DEFAULT 'index,follow',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+SQL);
     }
 
     public static function pdo(): PDO

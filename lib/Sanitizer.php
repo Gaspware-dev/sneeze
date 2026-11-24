@@ -14,8 +14,8 @@ class Sanitizer
 
     private const ALLOWED_ATTRS = [
         'href', 'src', 'alt', 'title', 'class', 'id', 'data-sneeze-id', 'data-sneeze-section',
-        'colspan', 'rowspan', 'width', 'height', 'loading', 'target', 'rel',
-        'style', 'role', 'aria-label', 'aria-hidden',
+        'colspan', 'rowspan', 'width', 'height', 'loading', 'decoding', 'target', 'rel',
+        'style', 'role', 'aria-label', 'aria-hidden', 'itemprop', 'itemscope', 'itemtype', 'datetime',
     ];
 
     public function clean(string $html): string
@@ -57,14 +57,16 @@ class Sanitizer
 
         if ($node->hasAttributes()) {
             $remove = [];
-            foreach ($node->attributes as $attr) {
+            foreach (iterator_to_array($node->attributes) as $attr) {
                 $name = strtolower($attr->nodeName);
                 if (str_starts_with($name, 'on') || !in_array($name, self::ALLOWED_ATTRS, true)) {
                     $remove[] = $attr->nodeName;
                 }
             }
             foreach ($remove as $name) {
-                $node->attributes?->removeNamedItem($name);
+                if ($node instanceof DOMElement) {
+                    $node->removeAttribute($name);
+                }
             }
         }
 

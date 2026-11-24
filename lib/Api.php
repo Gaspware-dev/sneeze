@@ -358,7 +358,6 @@ class Api
         }
 
         if (preg_match('#^/api/cms/sources/(\d+)$#', $uri, $m)) {
-            Auth::requireAdmin();
             $id = (int) $m[1];
             if ($method === 'GET') {
                 Response::json([
@@ -368,12 +367,14 @@ class Api
             }
             if ($method === 'PUT' || $method === 'POST') {
                 Auth::verifyCsrf();
+                Auth::requireAdmin();
                 $body = self::jsonBody();
                 $body['id'] = $id;
                 Response::json(['source' => CmsRepository::save($body)]);
             }
             if ($method === 'DELETE') {
                 Auth::verifyCsrf();
+                Auth::requireAdmin();
                 CmsRepository::delete($id);
                 Response::json(['ok' => true]);
             }
@@ -392,6 +393,51 @@ class Api
                 CmsRepository::markSynced((int) $m[1], $e->getMessage());
                 Response::error('Sync failed: ' . $e->getMessage(), 502);
             }
+        }
+
+        if ($uri === '/api/cms/markdown' && $method === 'POST') {
+            Auth::verifyCsrf();
+            $md = (string) (self::jsonBody()['markdown'] ?? '');
+            Response::json(['html' => (new Sanitizer())->clean(Markdown::toHtml($md))]);
+        }
+
+        if ($uri === '/api/cms/posts' && $method === 'GET') {
+            $status = isset($_GET['status']) ? (string) $_GET['status'] : null;
+            Response::json(['posts' => PostRepository::all($status)]);
+        }
+
+        if ($uri === '/api/cms/posts' && $method === 'POST') {
+            Auth::verifyCsrf();
+            $post = PostRepository::save(self::jsonBody());
+            Auth::audit((int) $user['id'], 'create_post', $post['slug']);
+            Response::json(['post' => $post]);
+        }
+
+        if (preg_match('#^/api/cms/posts/(\d+)$#', $uri, $m)) {
+            $id = (int) $m[1];
+            if ($method === 'GET') {
+                Response::json(['post' => PostRepository::get($id)]);
+            }
+            if ($method === 'PUT' || $method === 'POST') {
+                Auth::verifyCsrf();
+                $body = self::jsonBody();
+                $body['id'] = $id;
+                $post = PostRepository::save($body);
+                Auth::audit((int) $user['id'], 'save_post', $post['slug']);
+                Response::json(['post' => $post]);
+            }
+            if ($method === 'DELETE') {
+                Auth::verifyCsrf();
+                $post = PostRepository::get($id);
+                PostRepository::delete($id);
+                Auth::audit((int) $user['id'], 'delete_post', $post['slug']);
+                Response::json(['ok' => true]);
+            }
+        }
+
+        if ($uri === '/api/cms/posts/publish' && $method === 'POST') {
+            Auth::verifyCsrf();
+            Response::json((new Publisher())->publishPosts((int) $user['id']));
         }
 
         if ($uri === '/api/users' && $method === 'GET') {

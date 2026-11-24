@@ -13,6 +13,7 @@ class Publisher
         PageRepository::addRevision($pageId, $html, $userId);
         PageRepository::markPublished($pageId);
         Auth::audit($userId ?? 0, 'publish', $relative);
+        $this->publishFeedsAndSitemap();
         return [
             'ok' => true,
             'path' => $relative,
@@ -25,9 +26,69 @@ class Publisher
     {
         $results = [];
         foreach (PageRepository::all() as $page) {
-            $results[] = $this->publishPage((int) $page['id'], $userId);
+            $pageResult = $this->publishPageWithoutFeeds((int) $page['id'], $userId);
+            $results[] = $pageResult;
         }
-        return ['ok' => true, 'pages' => $results];
+        $posts = $this->publishPosts($userId, false);
+        $this->publishFeedsAndSitemap();
+        return ['ok' => true, 'pages' => $results, 'posts' => $posts];
+    }
+
+    public function publishPosts(?int $userId = null, bool $writeFeeds = true): array
+    {
+        PostRepository::syncAllToCache();
+        $compiler = new Compiler();
+        $published = [];
+        foreach (PostRepository::published() as $post) {
+            $html = $compiler->compilePost($post, false);
+            $relative = 'posts/' . $post['slug'] . '.html';
+            $this->writeSiteFile($relative, $html);
+            $published[] = [
+                'id' => $post['id'],
+                'slug' => $post['slug'],
+                'path' => $relative,
+                'url' => Compiler::postUrl((string) $post['slug']),
+            ];
+            Auth::audit($userId ?? 0, 'publish_post', $relative);
+        }
+        $indexHtml = $compiler->compilePostIndex(PostRepository::published(), false);
+        $this->writeSiteFile('posts/index.html', $indexHtml);
+        if ($writeFeeds) {
+            $this->publishFeedsAndSitemap();
+        }
+        return [
+            'ok' => true,
+            'posts' => $published,
+            'index' => 'posts/index.html',
+        ];
+    }
+
+    public function publishFeedsAndSitemap(): void
+    {
+        $compiler = new Compiler();
+        $posts = PostRepository::published();
+        $this->writeSiteFile('feed.xml', $compiler->compileRss($posts));
+        $this->writeSiteFile('sitemap.xml', $compiler->compileSitemap(
+            PageRepository::all(),
+            $posts
+        ));
+    }
+
+    private function publishPageWithoutFeeds(int $pageId, ?int $userId = null): array
+    {
+        $page = PageRepository::get($pageId, false);
+        $html = (new Compiler())->compilePage($pageId, false);
+        $relative = Compiler::outputPath((string) $page['slug']);
+        $this->writeSiteFile($relative, $html);
+        PageRepository::addRevision($pageId, $html, $userId);
+        PageRepository::markPublished($pageId);
+        Auth::audit($userId ?? 0, 'publish', $relative);
+        return [
+            'ok' => true,
+            'path' => $relative,
+            'url' => Compiler::pageUrl((string) $page['slug']),
+            'page' => PageRepository::get($pageId, false),
+        ];
     }
 
     public function writeSiteFile(string $relativePath, string $content): void
@@ -106,8 +167,9 @@ class Publisher
         if (!is_dir($dir)) {
             mkdir($dir, 0750, true);
         }
-        copy($fullPath, $dir . '/' . date('Y-m-d_His') . '.html');
-        $files = glob($dir . '/*.html') ?: [];
+        $ext = pathinfo($fullPath, PATHINFO_EXTENSION) ?: 'html';
+        copy($fullPath, $dir . '/' . date('Y-m-d_His') . '.' . $ext);
+        $files = glob($dir . '/*.' . $ext) ?: [];
         rsort($files);
         $keep = Config::backupRetention();
         foreach (array_slice($files, $keep) as $old) {
