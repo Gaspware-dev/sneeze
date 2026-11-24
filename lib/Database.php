@@ -215,7 +215,14 @@ CREATE TABLE IF NOT EXISTS cms_entries (
 )
 SQL);
 
-        $pdo->exec('PRAGMA user_version = 3');
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)
+SQL);
+
+        $pdo->exec('PRAGMA user_version = 4');
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
         if ($count === 0) {
@@ -223,6 +230,23 @@ SQL);
         }
 
         ToolchainRepository::ensure();
+        self::syncSettings($pdo);
+    }
+
+    /**
+     * First boot copies the on-disk config into SQLite. After that, the
+     * settings table is authoritative and is loaded back into Config.
+     */
+    private static function syncSettings(PDO $pdo): void
+    {
+        $count = (int) $pdo->query('SELECT COUNT(*) FROM settings')->fetchColumn();
+        if ($count === 0) {
+            $stmt = $pdo->prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+            foreach (Config::all() as $key => $value) {
+                $stmt->execute([(string) $key, json_encode($value)]);
+            }
+        }
+        Config::hydrateFromDatabase($pdo);
     }
 
     public static function pdo(): PDO

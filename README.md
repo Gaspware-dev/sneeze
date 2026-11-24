@@ -103,7 +103,8 @@ return true;
 - **Design tokens** — JSON tokens compile to `:root` CSS variables and are inlined on publish
 - **Draft vs publish** — save to the database; publish merges one HTML file per page
 - **Backup on publish** — previous files copied to `sneeze/data/backups/`
-- **Media library** — studio uploads stay in `sneeze/data/uploads` until publish copies used files into the site asset folder
+- **Media library** — studio uploads stay in `sneeze/data/uploads`. On publish, images at or under a configurable size (default 8 KB) are inlined as base64; larger files are copied into the site asset folder
+- **Page builder** — drag blocks from the palette onto the outline or the live preview, reorder with the drag handle, and undo/redo edits (toolbar or Ctrl+Z / Ctrl+Shift+Z)
 - **HTML import** — turn an existing page into a template + HTML block
 - **CMS cache** — fetch JSON from a headless CMS in the admin; visitors never call it
 - **Users** — admin and editor roles
@@ -112,14 +113,28 @@ return true;
 
 ## Publish pipeline
 
-On **Publish**, Sneeze concatenates design tokens, global CSS/JS, template CSS/JS, CSS/JS of used block types, and page CSS/JS, then writes a single HTML file:
+On **Publish**, Sneeze concatenates design tokens, global CSS/JS, template CSS/JS, CSS/JS of used block types, and page CSS/JS, then writes a single HTML file. The file does not depend on Sneeze running:
 
-- One minified `<style>` in `<head>` (only CSS for blocks actually on the page)
-- One minified `<script>` at the end of `<body>` (inline scripts cannot use `defer` without `src`)
+- One minified `<style>` in `<head>` (only CSS for blocks actually on the page). No external stylesheets.
+- One minified `<script>` at the end of `<body>` (inline scripts cannot use `defer` without `src`). No external scripts.
+- Images at or under **Settings → Inline images** (default `8192` bytes) are embedded as `data:image/...;base64,...`, including CSS `url(...)`. Set the threshold to `0` to never inline. The maximum is 512 KB.
+- Larger images, and files that are not images (PDF, video, fonts), are copied into the published asset folder and referenced by a relative path such as `uploads/2026/ab12.png`.
 - Markup normalized so the file can pass [validator.w3.org](https://validator.w3.org/)
 - TypeScript compiled to JS; Tailwind utilities generated from the page’s classes
 
-Preview uses the same compiler without minifying, plus selection chrome. Optional: install `esbuild` and `tailwindcss` on the server PATH (or in `sneeze/node_modules`) for the official compilers.
+Preview uses the same compiler without minifying, plus selection chrome, and keeps media on authenticated studio URLs so drafts are not written to the public folder. Optional: install `esbuild` and `tailwindcss` on the server PATH (or in `sneeze/node_modules`) for the official compilers.
+
+## Data
+
+SQLite file: `sneeze/data/sneeze.db`. It holds users, pages, blocks, templates, design tokens, global CSS/JS, media metadata, CMS cache, audit log, and settings (publish folder, asset folder, inline threshold, site title). The file is created on first request. `data/config.json` is a bootstrap copy updated whenever settings are saved; after startup the database wins.
+
+## Tests
+
+```bash
+php tests/run.php
+```
+
+The suite covers template rendering and the publish/export step: inline CSS and JS, the image size threshold (including the exact boundary), and separation of larger images and non-image files into the asset folder.
 
 ## Security
 

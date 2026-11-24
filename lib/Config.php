@@ -48,6 +48,9 @@ class Config
             'upload_dir' => 'uploads',
             'backup_retention' => 20,
             'site_title' => 'Sneeze Admin',
+            // Images at or under this size are embedded as data URIs on publish.
+            // 0 disables inlining. Capped at 512 KiB.
+            'inline_image_max_bytes' => 8192,
         ];
     }
 
@@ -150,16 +153,81 @@ class Config
         return max(1, (int) self::get('backup_retention', 20));
     }
 
+    /**
+     * Bytes at or under which published images are inlined as base64 data URIs.
+     * 0 disables inlining. Values above 512 KiB are capped.
+     */
+    public static function inlineImageMaxBytes(): int
+    {
+        return self::normalizeInlineImageMaxBytes(self::get('inline_image_max_bytes', 8192));
+    }
+
+    public static function normalizeInlineImageMaxBytes(mixed $bytes): int
+    {
+        $n = (int) $bytes;
+        if ($n < 0) {
+            $n = 0;
+        }
+        return min($n, 524288);
+    }
+
+    /**
+     * SQLite is the source of truth for settings after the database is connected.
+     * Keys missing from the table keep their defaults (so new settings apply
+     * without a migration of every existing install).
+     */
+    public static function hydrateFromDatabase(PDO $pdo): void
+    {
+        $rows = $pdo->query('SELECT key, value FROM settings')->fetchAll();
+        if (!$rows) {
+            return;
+        }
+        $data = self::defaults();
+        foreach ($rows as $row) {
+            $decoded = json_decode((string) $row['value'], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $data[(string) $row['key']] = $decoded;
+            }
+        }
+        self::$data = $data;
+    }
+
     public static function save(): void
     {
         $dir = dirname(self::$configPath);
         if (!is_dir($dir)) {
             mkdir($dir, 0750, true);
         }
+        if (isset(self::$data['inline_image_max_bytes'])) {
+            self::$data['inline_image_max_bytes'] = self::normalizeInlineImageMaxBytes(self::$data['inline_image_max_bytes']);
+        }
         file_put_contents(
             self::$configPath,
             json_encode(self::$data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
         );
+
+        try {
+            $pdo = Database::pdo();
+        } catch (RuntimeException) {
+            return;
+        }
+
+        $pdo->beginTransaction();
+        try {
+            $stmt = $pdo->prepare(
+                'INSERT INTO settings (key, value) VALUES (?, ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+            );
+            foreach (self::$data as $key => $value) {
+                $stmt->execute([(string) $key, json_encode($value)]);
+            }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
     }
 
     public static function detectWebBase(): string

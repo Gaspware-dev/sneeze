@@ -59,6 +59,10 @@ $user = Auth::user();
   <div class="workspace is-active" id="workspace-studio">
     <section class="preview-pane">
       <div class="preview-toolbar">
+        <div class="history-controls">
+          <button type="button" id="btn-undo" disabled title="Undo (Ctrl+Z)">Undo</button>
+          <button type="button" id="btn-redo" disabled title="Redo (Ctrl+Shift+Z)">Redo</button>
+        </div>
         <div class="preview-widths">
           <button type="button" class="is-active" data-width="100%">Desktop</button>
           <button type="button" data-width="768px">Tablet</button>
@@ -79,6 +83,7 @@ $user = Auth::user();
       </div>
 
       <div class="side-tab is-active" id="tab-blocks">
+        <p class="muted palette-hint">Drag a block onto the outline or the live preview. Click a block to append it. Undo and redo cover structure and text.</p>
         <div class="palette" id="block-palette"></div>
         <div class="outline-head">
           <strong>Outline</strong>
@@ -201,7 +206,7 @@ $user = Auth::user();
           <input type="file" id="media-upload" accept="image/*,.pdf,.svg,.woff,.woff2" hidden>
         </label>
       </div>
-      <p class="muted">Files are stored in the studio (<code>sneeze/data/uploads</code>) until you publish. Publish copies used files into the site asset folder.</p>
+      <p class="muted">Files stay in the studio (<code>sneeze/data/uploads</code>) until you publish. Images at or under the inline limit (8 KB by default, change in Settings) are embedded in the HTML. Larger files are copied into the site asset folder and referenced by relative path.</p>
       <div class="media-grid" id="media-grid"></div>
     </section>
   </div>
@@ -299,6 +304,11 @@ $user = Auth::user();
         <div class="contact-form__field">
           <label for="settings-retention">Publish backup retention</label>
           <input type="number" id="settings-retention" min="1" max="100">
+        </div>
+        <div class="contact-form__field">
+          <label for="settings-inline-bytes">Inline images at or under (bytes)</label>
+          <input type="number" id="settings-inline-bytes" min="0" max="524288" step="1024">
+          <p class="muted" style="margin-top:0.5rem">Images this size or smaller are embedded as base64 data URIs in the published HTML. Larger images, and anything that is not an image, are copied into the asset folder. Set to 0 to never inline. Default 8192 (8 KB). Maximum 524288 (512 KB).</p>
         </div>
         <div class="contact-form__field">
           <label for="settings-title">Admin / site title</label>

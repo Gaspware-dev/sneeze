@@ -103,18 +103,24 @@ body.studio-app {
 .preview-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
   color: rgba(255, 255, 255, 0.8);
   font-size: 0.8125rem;
 }
 
+.history-controls,
 .preview-widths {
   display: flex;
   gap: 0.25rem;
 }
 
+.preview-widths {
+  margin-left: auto;
+}
+
+.history-controls button,
 .preview-widths button {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -124,6 +130,11 @@ body.studio-app {
   cursor: pointer;
   font-family: var(--font-body);
   font-size: 0.75rem;
+}
+
+.history-controls button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .preview-widths button.is-active {
@@ -201,6 +212,10 @@ body.studio-app {
   margin-bottom: 0.85rem;
 }
 
+.palette-hint {
+  margin: 0 0 0.65rem;
+}
+
 .palette button {
   border: 1px solid var(--color-border);
   background: var(--color-white);
@@ -208,7 +223,11 @@ body.studio-app {
   padding: 0.3rem 0.65rem;
   font-size: 0.75rem;
   font-family: var(--font-body);
-  cursor: pointer;
+  cursor: grab;
+}
+
+.palette button:active {
+  cursor: grabbing;
 }
 
 .palette button:hover {
@@ -240,6 +259,63 @@ body.studio-app {
 .outline-item.is-selected {
   border-color: var(--color-brand-red);
   background: var(--color-brand-red-soft);
+}
+
+.outline-slot {
+  min-height: 1.75rem;
+  border-radius: 8px;
+}
+
+.outline-slot.is-drop-target {
+  outline: 2px dashed var(--color-brand-red);
+  background: var(--color-brand-red-soft);
+}
+
+.slot-empty {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  padding: 0.35rem 0.15rem 0.15rem;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--color-text-muted);
+  user-select: none;
+  touch-action: none;
+  letter-spacing: -0.14em;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  min-height: 1.7rem;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.drag-handle:hover {
+  background: rgba(208, 76, 76, 0.08);
+  color: var(--color-brand-red-deep);
+}
+
+#drag-ghost {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: var(--color-navy);
+  color: var(--color-white);
+  font: 600 0.75rem var(--font-body);
+  box-shadow: var(--shadow-lg);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.outline-item.is-dragging {
+  opacity: 0.45;
 }
 
 .outline-item__row {

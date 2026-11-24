@@ -61,8 +61,9 @@ All creative artifacts live in SQLite (`data/sneeze.db`).
 - **page_revisions** — HTML snapshot on each publish.
 - **cms_sources** / **cms_entries** — adapter config + cached payloads.
 - Existing **users**, **media**, **audit_log**, **login_attempts**.
+- **settings** — site root, public URL base, asset folder, backup retention, site title, and the image-inline byte threshold. SQLite is authoritative after startup. `data/config.json` is only a bootstrap mirror written on save.
 
-Filesystem: published HTML lands in the site root. Binary media is uploaded into **`sneeze/data/uploads`** (studio-only). On publish, files actually used on the page are copied into the configurable site **asset folder** (`uploads/` by default). Metadata stays in SQLite.
+Filesystem: published HTML lands in the site root. Binary media is uploaded into **`sneeze/data/uploads`** (studio-only). On publish, images at or under `inline_image_max_bytes` (default 8 KB, `0` disables) are embedded as base64 data URIs. Larger images and other media are copied into the configurable site **asset folder** (`uploads/` by default) and referenced by a relative path. Metadata stays in SQLite.
 
 ---
 
@@ -79,7 +80,8 @@ On preview and on publish, `Compiler` builds one document:
 7. Inject **one** minified `<style>` at the end of `<head>` (render-blocking CSS is correct for inlined critical styles; unused block-type CSS is omitted).
 8. Inject **one** minified `<script>` immediately before `</body>`. Inline scripts cannot use `defer`/`async` (invalid without `src`), so they never go in `<head>` — including scripts marked “head”, which still run first in the footer bundle.
 9. Normalize markup for [the W3C HTML checker](https://validator.w3.org/): strip empty `class`/`id`/`style`, ensure `alt` on images, require `<!DOCTYPE html>`, drop empty style/script tags.
-10. **Publish** writes `{slug}.html` (`index` → `index.html`) into the configured site root, atomically, with a backup of the previous file.
+10. Rewrite media references. Images at or under the configured byte threshold become `data:` URIs (including CSS `url()`). Larger images and non-images are copied into the asset folder and referenced with a path relative to the HTML file.
+11. **Publish** writes `{slug}.html` (`index` → `index.html`) into the configured site root, atomically, with a backup of the previous file.
 
 Preview skips minification so the iframe stays readable; published files are minified.
 

@@ -94,6 +94,8 @@ expect('tw config no satisfies', str_contains($cfgJs, 'satisfies'), false);
 
 expect('asset folder sanitized', Config::sanitizeUploadDir('assets/img', false), 'assets/img');
 expect('asset folder rejects traversal', Config::sanitizeUploadDir('../etc', false), 'uploads');
+expect('inline cap', Config::normalizeInlineImageMaxBytes(9000000), 524288);
+expect('inline disabled floor', Config::normalizeInlineImageMaxBytes(-4), 0);
 
 $doc = <<<'HTML'
 <!DOCTYPE html>
@@ -193,29 +195,116 @@ $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42m
 $pngPath = $installDir . '/dot.png';
 file_put_contents($pngPath, $png);
 Config::set('upload_dir', 'assets');
+Config::set('inline_image_max_bytes', 8192);
+expect('inline threshold loaded', Config::inlineImageMaxBytes(), 8192);
 $media = (new MediaStore())->ingest($pngPath, 'dot.png', 0);
 expect('media draft exists', is_file(MediaStore::draftAbs($media['storage_key'])), true);
 expect('media not public yet', is_file(MediaStore::publishedAbs($media['storage_key'])), false);
 expectContains('media public path', $media['path'], 'assets/');
 
+$largeBytes = $png . str_repeat('Z', 9000);
+$large = addMediaFile($largeBytes, 'large.png', 'image/png');
+expect('large image exceeds threshold', $large['size'] > 8192, true);
+$pdfBytes = "%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n";
+$pdf = addMediaFile($pdfBytes, 'note.pdf', 'application/pdf');
+expect('pdf is under image threshold', strlen($pdfBytes) < 8192, true);
+
 $mediaTpl = TemplateRepository::get((int) $home['template_id']);
 $mediaTpl['html'] = str_replace(
     '{{slot:content}}',
-    '<img src="' . $media['path'] . '" alt="dot">{{slot:content}}',
+    '<img src="' . $media['path'] . '" alt="dot">'
+    . '<img src="' . $large['path'] . '" alt="large">'
+    . '<a href="' . $pdf['path'] . '">notes</a>'
+    . '{{slot:content}}',
     $mediaTpl['html']
 );
-$mediaPreview = (new Compiler())->compilePage((int) $home['id'], true, ['template' => $mediaTpl]);
+$exportDraft = [
+    'template' => $mediaTpl,
+    'custom_css' => '.export-marker{color:#123456}body{background-image:url(' . $media['path'] . ')}',
+    'custom_js' => "function ping(){return 'pong';}\n",
+];
+$mediaPreview = (new Compiler())->compilePage((int) $home['id'], true, $exportDraft);
 expectContains('preview uses studio media', $mediaPreview, 'api/media/file/' . $media['id']);
-$mediaPublish = (new Compiler())->compilePage((int) $home['id'], false, ['template' => $mediaTpl]);
-expectContains('publish uses site assets', $mediaPublish, $media['path']);
-expect('publish copied asset', is_file(MediaStore::publishedAbs($media['storage_key'])), true);
+expectContains('preview large uses studio media', $mediaPreview, 'api/media/file/' . $large['id']);
+expect('preview does not inline', str_contains($mediaPreview, 'data:image/'), false);
+
+$mediaPublish = (new Compiler())->compilePage((int) $home['id'], false, $exportDraft);
+$smallUri = 'data:image/png;base64,' . base64_encode($png);
+expectContains('small image inlined', $mediaPublish, $smallUri);
+expect('small image omitted from asset folder', is_file(MediaStore::publishedAbs($media['storage_key'])), false);
+expect('small path not left in html', str_contains($mediaPublish, $media['storage_key']), false);
+expectContains('css url inlined', $mediaPublish, 'url(' . $smallUri . ')');
+expectContains('large image stays a file', $mediaPublish, $large['path']);
+expect('large image copied', is_file(MediaStore::publishedAbs($large['storage_key'])), true);
+expect('large image not inlined', str_contains($mediaPublish, 'data:image/png;base64,' . base64_encode($largeBytes)), false);
+expectContains('pdf stays a file', $mediaPublish, $pdf['path']);
+expect('pdf copied', is_file(MediaStore::publishedAbs($pdf['storage_key'])), true);
+expect('pdf not inlined', str_contains($mediaPublish, 'data:application/pdf'), false);
+expectContains('export css inline', $mediaPublish, '.export-marker{color:#123456}');
+expectContains('export js inline', $mediaPublish, "function ping(){return'pong';}");
+expectContains('style closed in head', $mediaPublish, "</style>\n</head>");
+expectContains('script closed in body', $mediaPublish, "</script>\n</body>");
+expect('single style tag', substr_count(strtolower($mediaPublish), '<style>'), 1);
+expect('single script tag', substr_count(strtolower($mediaPublish), '<script>'), 1);
+expect('no stylesheet link', preg_match('/<link\b[^>]*stylesheet/i', $mediaPublish) === 1, false);
+expect('no external script', preg_match('/<script\b[^>]*\bsrc=/i', $mediaPublish) === 1, false);
 expect('publish has no studio url', str_contains($mediaPublish, 'api/media/file/'), false);
+expect('publish has no preview chrome', str_contains($mediaPublish, 'sneeze-block'), false);
+
+Config::set('inline_image_max_bytes', strlen($png));
+$atThreshold = (new Compiler())->compilePage((int) $home['id'], false, $exportDraft);
+expectContains('exact threshold inlines', $atThreshold, $smallUri);
+
+Config::set('inline_image_max_bytes', max(0, strlen($png) - 1));
+$below = (new Compiler())->compilePage((int) $home['id'], false, $exportDraft);
+expectContains('below threshold stays a file', $below, $media['path']);
+expect('below threshold copied', is_file(MediaStore::publishedAbs($media['storage_key'])), true);
+expect('below threshold not inlined', str_contains($below, $smallUri), false);
+
+Config::set('inline_image_max_bytes', 0);
+$disabled = (new Compiler())->compilePage((int) $home['id'], false, $exportDraft);
+expect('zero disables inlining', str_contains($disabled, 'data:image/'), false);
+expectContains('disabled still emits css', $disabled, '.export-marker{color:#123456}');
+expectContains('disabled still emits js', $disabled, "function ping(){return'pong';}");
+
+Config::set('site_title', 'SQLite Settings');
+Config::set('inline_image_max_bytes', 4096);
+Config::save();
+$stored = Database::pdo()->query("SELECT value FROM settings WHERE key = 'inline_image_max_bytes'")->fetchColumn();
+expect('settings live in sqlite', json_decode((string) $stored, true), 4096);
+$titleRow = Database::pdo()->query("SELECT value FROM settings WHERE key = 'site_title'")->fetchColumn();
+expect('site title stored in sqlite', json_decode((string) $titleRow, true), 'SQLite Settings');
+Database::pdo()->prepare('UPDATE settings SET value = ? WHERE key = ?')->execute([json_encode('From SQLite'), 'site_title']);
+Config::hydrateFromDatabase(Database::pdo());
+expect('sqlite settings are authoritative', Config::get('site_title'), 'From SQLite');
 
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);
+
+function addMediaFile(string $bytes, string $filename, string $mime): array
+{
+    $ext = pathinfo($filename, PATHINFO_EXTENSION) ?: 'bin';
+    $key = '2026/' . bin2hex(random_bytes(4)) . '.' . $ext;
+    $dest = MediaStore::draftAbs($key);
+    if (!is_dir(dirname($dest))) {
+        mkdir(dirname($dest), 0750, true);
+    }
+    file_put_contents($dest, $bytes);
+    Database::pdo()->prepare(
+        'INSERT INTO media (filename, path, mime, size, uploaded_by) VALUES (?, ?, ?, ?, NULL)'
+    )->execute([$filename, $key, $mime, strlen($bytes)]);
+
+    return [
+        'id' => (int) Database::pdo()->lastInsertId(),
+        'path' => Config::uploadDir() . '/' . $key,
+        'storage_key' => $key,
+        'mime' => $mime,
+        'size' => strlen($bytes),
+    ];
+}
 
 function w3cErrors(string $html): array
 {
