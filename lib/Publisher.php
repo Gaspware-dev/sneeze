@@ -6,20 +6,9 @@ class Publisher
 {
     public function publishPage(int $pageId, ?int $userId = null): array
     {
-        $page = PageRepository::get($pageId, false);
-        $html = (new Compiler())->compilePage($pageId, false);
-        $relative = Compiler::outputPath((string) $page['slug']);
-        $this->writeSiteFile($relative, $html);
-        PageRepository::addRevision($pageId, $html, $userId);
-        PageRepository::markPublished($pageId);
-        Auth::audit($userId ?? 0, 'publish', $relative);
+        $result = $this->publishPageWithoutFeeds($pageId, $userId);
         $this->publishFeedsAndSitemap();
-        return [
-            'ok' => true,
-            'path' => $relative,
-            'url' => Compiler::pageUrl((string) $page['slug']),
-            'page' => PageRepository::get($pageId, false),
-        ];
+        return $result;
     }
 
     public function publishAll(?int $userId = null): array
@@ -76,6 +65,10 @@ class Publisher
 
     private function publishPageWithoutFeeds(int $pageId, ?int $userId = null): array
     {
+        PluginHooks::action(PluginHooks::PUBLISH_BEFORE, [
+            'page_id' => $pageId,
+            'user_id' => $userId,
+        ]);
         $page = PageRepository::get($pageId, false);
         $html = (new Compiler())->compilePage($pageId, false);
         $relative = Compiler::outputPath((string) $page['slug']);
@@ -83,12 +76,18 @@ class Publisher
         PageRepository::addRevision($pageId, $html, $userId);
         PageRepository::markPublished($pageId);
         Auth::audit($userId ?? 0, 'publish', $relative);
-        return [
+        $result = [
             'ok' => true,
             'path' => $relative,
             'url' => Compiler::pageUrl((string) $page['slug']),
             'page' => PageRepository::get($pageId, false),
         ];
+        PluginHooks::action(PluginHooks::PUBLISH_AFTER, [
+            'page_id' => $pageId,
+            'user_id' => $userId,
+            'result' => $result,
+        ]);
+        return $result;
     }
 
     public function writeSiteFile(string $relativePath, string $content): void

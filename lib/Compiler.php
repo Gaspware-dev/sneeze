@@ -11,10 +11,35 @@ class Compiler
         $this->interpolator = $interpolator ?? new Interpolator();
     }
 
+    private static int $compileDepth = 0;
+
+    public static function isCompiling(): bool
+    {
+        return self::$compileDepth > 0;
+    }
+
+    private function guarded(callable $run): string
+    {
+        self::$compileDepth++;
+        try {
+            return $run();
+        } finally {
+            self::$compileDepth--;
+        }
+    }
+
     /**
      * @param array<string, mixed>|null $draft page overrides: title, slug, template_id, seo_*, custom_css/js, chrome, blocks
      */
     public function compilePage(int $pageId, bool $preview = false, ?array $draft = null): string
+    {
+        return $this->guarded(fn () => $this->compilePageNow($pageId, $preview, $draft));
+    }
+
+    /**
+     * @param array<string, mixed>|null $draft
+     */
+    private function compilePageNow(int $pageId, bool $preview = false, ?array $draft = null): string
     {
         $page = PageRepository::get($pageId, $draft === null || !isset($draft['blocks']));
         if ($draft) {
@@ -41,9 +66,9 @@ class Compiler
         if (is_array($draft) && is_array($draft['template'] ?? null)) {
             $template = array_merge($template, $draft['template']);
         }
-        $blocks = $page['blocks'] ?? [];
+        $blocks = $this->filterBlocks($page['blocks'] ?? [], $page, $preview);
 
-        $context = $this->siteContext($page);
+        $context = $this->filterContext($this->siteContext($page), $page, $preview);
         $slotHtml = [
             'content' => $this->renderBlocks($blocks, 'content', $preview),
         ];
@@ -54,21 +79,20 @@ class Compiler
         $assets = $this->collectAssets($template, $blocks, $page);
         $assets = $this->compileLanguages($html, $assets);
 
-        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
-        $html = MediaStore::applyToDocument($html, $preview, (string) ($page['slug'] ?? 'index'));
-
-        if ($preview) {
-            $html = $this->injectPreviewChrome($html);
-        }
-
-        return $html;
+        return $this->sealDocument($html, $page, $assets, $preview, $preview);
     }
 
     public function compileDraft(array $page, array $template, array $blocks, bool $preview = true): string
     {
+        return $this->guarded(fn () => $this->compileDraftNow($page, $template, $blocks, $preview));
+    }
+
+    private function compileDraftNow(array $page, array $template, array $blocks, bool $preview = true): string
+    {
         $page['blocks'] = $blocks;
         $page = $this->normalizePageAssetFields($page);
-        $context = $this->siteContext($page);
+        $blocks = $this->filterBlocks($blocks, $page, $preview);
+        $context = $this->filterContext($this->siteContext($page), $page, $preview);
         $context['_slots'] = [
             'content' => $this->renderBlocks($blocks, 'content', $preview),
         ];
@@ -76,12 +100,7 @@ class Compiler
         $html = $this->injectChrome($html, $page, $context);
         $assets = $this->collectAssets($template, $blocks, $page);
         $assets = $this->compileLanguages($html, $assets);
-        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
-        $html = MediaStore::applyToDocument($html, $preview, (string) ($page['slug'] ?? 'index'));
-        if ($preview) {
-            $html = $this->injectPreviewChrome($html);
-        }
-        return $html;
+        return $this->sealDocument($html, $page, $assets, $preview, $preview);
     }
 
     private function normalizePageAssetFields(array $page): array
@@ -259,11 +278,17 @@ class Compiler
 
     public function compilePost(array $post, bool $preview = false): string
     {
+        return $this->guarded(fn () => $this->compilePostNow($post, $preview));
+    }
+
+    private function compilePostNow(array $post, bool $preview = false): string
+    {
         $template = $this->postTemplate();
         $page = $this->postAsPageContext($post);
         $context = $this->siteContext($page);
         $context['site']['feed_url'] = self::absoluteUrl('feed.xml');
         $context['page'] = array_merge($context['page'], $page['seo_extra'] ?? []);
+        $context = $this->filterContext($context, $page, $preview);
         $article = $this->renderPostArticle($post);
         $context['_slots'] = ['content' => $article];
 
@@ -279,12 +304,15 @@ class Compiler
         $assets = $this->collectAssets($template, [], $fakePage);
         $assets['css'] .= "\n" . ($template['css'] ?? '');
         $assets = $this->compileLanguages($html, $assets);
-        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
-        $html = MediaStore::applyToDocument($html, $preview, 'posts/' . $post['slug']);
-        return $html;
+        return $this->sealDocument($html, $page, $assets, $preview, false);
     }
 
     public function compilePostIndex(array $posts, bool $preview = false): string
+    {
+        return $this->guarded(fn () => $this->compilePostIndexNow($posts, $preview));
+    }
+
+    private function compilePostIndexNow(array $posts, bool $preview = false): string
     {
         $template = $this->postTemplate();
         $page = [
@@ -312,6 +340,7 @@ class Compiler
         $context = $this->siteContext($page);
         $context['site']['feed_url'] = self::absoluteUrl('feed.xml');
         $context['page'] = array_merge($context['page'], $page['seo_extra']);
+        $context = $this->filterContext($context, $page, $preview);
         $items = '';
         foreach ($posts as $post) {
             $url = htmlspecialchars(self::postUrl((string) $post['slug']), ENT_QUOTES, 'UTF-8');
@@ -340,8 +369,7 @@ class Compiler
         $assets = $this->collectAssets($template, [], $fakePage);
         $assets['css'] .= "\n" . ($template['css'] ?? '');
         $assets = $this->compileLanguages($html, $assets);
-        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
-        return MediaStore::applyToDocument($html, $preview, 'posts/index');
+        return $this->sealDocument($html, $page, $assets, $preview, false);
     }
 
     public function compileRss(array $posts): string
@@ -588,6 +616,17 @@ class Compiler
             $templateHtml = $this->previewEditableTemplate($templateHtml, $type);
         }
         $inner = $this->interpolator->render($templateHtml, $data);
+        $filteredInner = PluginHooks::filter(PluginHooks::BLOCK_HTML, $inner, [
+            'preview' => $preview,
+            'block' => [
+                'id' => $blockId,
+                'slug' => (string) ($type['slug'] ?? ''),
+                'slot' => $slot,
+            ],
+        ]);
+        if (is_string($filteredInner)) {
+            $inner = $filteredInner;
+        }
         if (!$preview) {
             return $inner;
         }
@@ -798,6 +837,60 @@ class Compiler
             'jsHead' => implode("\n\n", $jsHead),
             'jsFoot' => implode("\n\n", $jsFoot),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $page
+     * @return array<string, mixed>
+     */
+    private function filterContext(array $context, array $page, bool $preview): array
+    {
+        $next = PluginHooks::filter(PluginHooks::COMPILE_CONTEXT, $context, [
+            'page' => $page,
+            'preview' => $preview,
+        ]);
+        return is_array($next) ? $next : $context;
+    }
+
+    /**
+     * @param array<int, mixed> $blocks
+     * @param array<string, mixed> $page
+     * @return array<int, mixed>
+     */
+    private function filterBlocks(array $blocks, array $page, bool $preview): array
+    {
+        $next = PluginHooks::filter(PluginHooks::COMPILE_BLOCKS, $blocks, [
+            'page' => $page,
+            'preview' => $preview,
+        ]);
+        return is_array($next) ? $next : $blocks;
+    }
+
+    /**
+     * @param array<string, mixed> $page
+     * @param array{css: string, jsHead: string, jsFoot: string} $assets
+     */
+    private function sealDocument(string $html, array $page, array $assets, bool $preview, bool $previewChrome): string
+    {
+        $base = ['page' => $page, 'preview' => $preview];
+        $nextAssets = PluginHooks::filter(PluginHooks::COMPILE_ASSETS, $assets, $base + ['html' => $html]);
+        if (
+            is_array($nextAssets)
+            && isset($nextAssets['css'], $nextAssets['jsHead'], $nextAssets['jsFoot'])
+            && is_string($nextAssets['css'])
+            && is_string($nextAssets['jsHead'])
+            && is_string($nextAssets['jsFoot'])
+        ) {
+            $assets = $nextAssets;
+        }
+        $html = $this->inject($html, $assets['css'], $assets['jsHead'], $assets['jsFoot'], $preview);
+        $html = MediaStore::applyToDocument($html, $preview, (string) ($page['slug'] ?? 'index'));
+        if ($previewChrome) {
+            $html = $this->injectPreviewChrome($html);
+        }
+        $next = PluginHooks::filter(PluginHooks::COMPILE_HTML, $html, $base);
+        return is_string($next) ? $next : $html;
     }
 
     /**

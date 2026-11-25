@@ -1,0 +1,17 @@
+{
+  "id": "example",
+  "name": "Example",
+  "version": "1.0.0",
+  "description": "Reference plugin: a studio tab, a ping route, and an optional note in published HTML.",
+  "api": 1,
+  "entry": "Plugin.php",
+  "class": "ExamplePlugin",
+  "capabilities": ["routes", "studio", "compile"],
+  "settings": [
+    {
+      "key": "note",
+      "label": "HTML note",
+      "type": "text"
+    }
+  ]
+}

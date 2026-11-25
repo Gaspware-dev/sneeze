@@ -72,6 +72,73 @@ class Api
 
         $user = Auth::requireAuth();
 
+        if ($uri === '/api/plugins' && $method === 'GET') {
+            Response::json(Plugins::listPayload($user['role'] === 'admin'));
+        }
+
+        if ($uri === '/api/plugins/reference' && $method === 'GET') {
+            Auth::requireAdmin();
+            Response::json(Plugins::referencePayload());
+        }
+
+        if ($uri === '/api/plugins/upload' && $method === 'POST') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            if (!isset($_FILES['file'])) {
+                Response::error('file required');
+            }
+            try {
+                $installed = Plugins::installZip($_FILES['file']);
+            } catch (PluginException $e) {
+                Response::error($e->getMessage());
+            }
+            Auth::audit((int) $user['id'], 'install_plugin', (string) ($installed['id'] ?? ''));
+            Response::json(['plugin' => $installed]);
+        }
+
+        if (preg_match('#^/api/plugins/([a-z][a-z0-9-]{0,40})/(enable|disable)$#', $uri, $m) && $method === 'POST') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            try {
+                $plugin = $m[2] === 'enable' ? Plugins::enable($m[1]) : Plugins::disable($m[1]);
+            } catch (PluginException $e) {
+                Response::error($e->getMessage());
+            }
+            Auth::audit((int) $user['id'], $m[2] . '_plugin', $m[1]);
+            Response::json(['plugin' => $plugin]);
+        }
+
+        if (preg_match('#^/api/plugins/([a-z][a-z0-9-]{0,40})/settings$#', $uri, $m) && $method === 'POST') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            try {
+                $settings = Plugins::saveSettings($m[1], self::jsonBody());
+            } catch (PluginException $e) {
+                Response::error($e->getMessage());
+            }
+            Response::json(['settings' => $settings]);
+        }
+
+        if (preg_match('#^/api/plugins/([a-z][a-z0-9-]{0,40})$#', $uri, $m) && $method === 'DELETE') {
+            Auth::verifyCsrf();
+            Auth::requireAdmin();
+            try {
+                Plugins::delete($m[1]);
+            } catch (PluginException $e) {
+                Response::error($e->getMessage());
+            }
+            Auth::audit((int) $user['id'], 'delete_plugin', $m[1]);
+            Response::json(['ok' => true]);
+        }
+
+        if (str_starts_with($uri, '/api/plugin/')) {
+            $verb = strtoupper($method);
+            if (!in_array($verb, ['GET', 'HEAD'], true)) {
+                Auth::verifyCsrf();
+            }
+            Plugins::dispatch($method, $uri);
+        }
+
         if ($uri === '/api/pages' && $method === 'GET') {
             Response::json(['pages' => PageRepository::all()]);
         }

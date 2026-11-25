@@ -378,11 +378,304 @@ if (class_exists('ZipArchive')) {
     echo "skip updater (ZipArchive missing)\n";
 }
 
+$repoPlugins = dirname(__DIR__) . '/plugins/example';
+$parsedExample = PluginManifest::parse($repoPlugins);
+expect('plugin asset uri kept', Plugins::normalizeUri('/plugin-assets/example/panel.js', '/plugin-assets/example/panel.js'), '/plugin-assets/example/panel.js');
+expect('subdir api uri stripped', Plugins::normalizeUri('/sneeze/api/plugins', '/sneeze/index.php'), '/api/plugins');
+expect('example manifest id', $parsedExample['id'], 'example');
+expect('example manifest api', $parsedExample['api'], PluginApi::VERSION);
+
+$publicMethods = [];
+foreach ((new ReflectionClass(PluginApi::class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+    if ($method->getDeclaringClass()->getName() !== 'PluginApi') {
+        continue;
+    }
+    $publicMethods[] = $method->getName();
+}
+$catalogued = array_column(PluginApi::reference(), 'method');
+sort($publicMethods);
+$sortedCatalog = $catalogued;
+sort($sortedCatalog);
+expect('api catalog matches methods', $sortedCatalog, $publicMethods);
+expect('api catalog unique', count($catalogued) === count(array_unique($catalogued)), true);
+
+$hookNames = array_column(PluginHooks::catalog(), 'name');
+$hookConstants = [];
+foreach ((new ReflectionClass(PluginHooks::class))->getReflectionConstants() as $constant) {
+    if ($constant->getDeclaringClass()->getName() !== 'PluginHooks') {
+        continue;
+    }
+    if (is_string($constant->getValue())) {
+        $hookConstants[] = $constant->getValue();
+    }
+}
+sort($hookNames);
+sort($hookConstants);
+expect('hook catalog matches constants', $hookNames, $hookConstants);
+foreach (PluginHooks::catalog() as $hook) {
+    expect('hook kind ' . $hook['name'], in_array($hook['kind'], ['filter', 'action'], true), true);
+}
+
+$described = array_column(PluginManifest::describe(), 'name');
+expect('manifest describe covers fields', $described, array_keys(PluginManifest::FIELDS));
+$exampleJson = json_decode((string) file_get_contents($repoPlugins . '/plugin.json'), true);
+foreach (array_keys($exampleJson) as $field) {
+    expect('example field documented ' . $field, in_array($field, $described, true), true);
+}
+$referenceDoc = Plugins::referencePayload();
+expect('reference api version', $referenceDoc['api_version'], 1);
+expect('reference has client', count($referenceDoc['client']) >= 8, true);
+expect('reference has notes', count($referenceDoc['notes']) >= 1, true);
+
+$fixture = $installDir . '/manifest-fixtures';
+mkdir($fixture . '/escape', 0755, true);
+file_put_contents($fixture . '/escape/plugin.json', json_encode([
+    'id' => 'escape',
+    'name' => 'Escape',
+    'version' => '1',
+    'description' => '',
+    'api' => 1,
+    'entry' => '../index.php',
+    'class' => 'EscapePlugin',
+    'capabilities' => [],
+]));
+try {
+    PluginManifest::parse($fixture . '/escape');
+    expect('manifest rejects traversal', false, true);
+} catch (PluginException $e) {
+    expectContains('manifest rejects traversal', $e->getMessage(), 'escapes');
+}
+
+mkdir($fixture . '/bad-api', 0755, true);
+file_put_contents($fixture . '/bad-api/Plugin.php', "<?php\nclass BadApiPlugin implements SneezePlugin { public function boot(PluginApi \$api): void {} }\n");
+file_put_contents($fixture . '/bad-api/plugin.json', json_encode([
+    'id' => 'bad-api',
+    'name' => 'Bad',
+    'version' => '1',
+    'description' => '',
+    'api' => '1',
+    'entry' => 'Plugin.php',
+    'class' => 'BadApiPlugin',
+    'capabilities' => [],
+]));
+try {
+    PluginManifest::parse($fixture . '/bad-api');
+    expect('manifest rejects string api', false, true);
+} catch (PluginException $e) {
+    expectContains('manifest rejects string api', $e->getMessage(), 'integer');
+}
+
+$reader = PluginApi::forPlugin([
+    'id' => 'reader',
+    'name' => 'Reader',
+    'version' => '1',
+    'capabilities' => ['site.read'],
+], $installDir);
+$pageCount = count(PageRepository::all());
+try {
+    $reader->createPage(['title' => 'Nope']);
+    expect('capability denied', false, true);
+} catch (PluginException $e) {
+    expectContains('capability denied', $e->getMessage(), 'site.write');
+}
+expect('capability wrote nothing', count(PageRepository::all()), $pageCount);
+$reader->setOption('label', 'kept');
+expect('option roundtrip', $reader->option('label'), 'kept');
+expect('options map', $reader->options()['label'] ?? null, 'kept');
+$reader->setOption('label', null);
+expect('option deleted', $reader->option('label', 'gone'), 'gone');
+try {
+    $reader->path('../index.php');
+    expect('path rejects traversal', false, true);
+} catch (PluginException $e) {
+    expectContains('path rejects traversal', $e->getMessage(), 'escapes');
+}
+expect('path stays inside', str_starts_with($reader->path(''), realpath($installDir)), true);
+
+$oldDir = $installDir . '/plugins/oldapi';
+mkdir($oldDir, 0755, true);
+file_put_contents($oldDir . '/Plugin.php', "<?php\nclass OldApiPlugin implements SneezePlugin { public function boot(PluginApi \$api): void { \$api->setOption('booted', true); } }\n");
+file_put_contents($oldDir . '/plugin.json', json_encode([
+    'id' => 'oldapi',
+    'name' => 'Old',
+    'version' => '0',
+    'description' => 'Wrong API',
+    'api' => 99,
+    'entry' => 'Plugin.php',
+    'class' => 'OldApiPlugin',
+    'capabilities' => ['compile'],
+]));
+copyPluginDir($repoPlugins, $installDir . '/plugins/example');
+copyPluginDir($repoPlugins, $installDir . '/data/plugins/example');
+$overrideManifest = json_decode((string) file_get_contents($installDir . '/data/plugins/example/plugin.json'), true);
+$overrideManifest['version'] = '9.9.9';
+file_put_contents($installDir . '/data/plugins/example/plugin.json', json_encode($overrideManifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+Plugins::boot();
+$listed = Plugins::listPayload(true)['plugins'];
+$old = pluginById($listed, 'oldapi');
+expect('old api not enabled', $old['enabled'] ?? true, false);
+expectContains('old api error', (string) ($old['error'] ?? ''), 'not supported');
+expect('old api class not loaded', class_exists('OldApiPlugin', false), false);
+$override = pluginById($listed, 'example');
+expect('user plugin overrides bundled', $override['origin'] ?? '', 'user');
+expect('user plugin version', $override['version'] ?? '', '9.9.9');
+expect('override stays disabled', $override['enabled'] ?? true, false);
+expect('disabled plugin has no route', Plugins::accessFor('GET', '/api/plugin/example/ping'), null);
+
+Plugins::delete('example');
+$afterDelete = pluginById(Plugins::listPayload(false)['plugins'], 'example');
+expect('bundled remains after user delete', $afterDelete['origin'] ?? '', 'bundled');
+expect('bundled version restored', $afterDelete['version'] ?? '', '1.0.0');
+expect('user copy removed', is_dir($installDir . '/data/plugins/example'), false);
+
+$enabled = Plugins::enable('example');
+expect('example enabled', $enabled['enabled'], true);
+expect('example booted tab', count($enabled['contributions']['side_tabs'] ?? []) === 1, true);
+expect('example class loaded', class_exists('ExamplePlugin', false), true);
+$getAccess = Plugins::accessFor('GET', '/api/plugin/example/ping');
+expect('route requires auth', $getAccess['auth'] ?? false, true);
+expect('get skips csrf', $getAccess['csrf'] ?? true, false);
+expect('get is not admin', $getAccess['admin'] ?? true, false);
+$postAccess = Plugins::accessFor('POST', '/api/plugin/example/echo');
+expect('post requires csrf', $postAccess['csrf'] ?? false, true);
+expect('post requires auth', $postAccess['auth'] ?? false, true);
+$adminAccess = Plugins::accessFor('GET', '/api/plugin/example/admin-ping');
+expect('admin route flagged', $adminAccess['admin'] ?? false, true);
+$pong = Plugins::invoke('GET', '/api/plugin/example/ping');
+expect('ping ok', $pong['ok'] ?? false, true);
+expect('ping id', $pong['plugin'] ?? '', 'example');
+expect('asset traversal blocked', Plugins::resolveAsset('example', '../Plugin.php'), null);
+expect('asset served from assets dir', is_file((string) Plugins::resolveAsset('example', 'panel.js')), true);
+expect('disabled old api asset hidden', Plugins::resolveAsset('oldapi', 'Plugin.php'), null);
+
+$exampleApi = PluginApi::forPlugin(
+    PluginManifest::parse($installDir . '/plugins/example'),
+    $installDir . '/plugins/example'
+);
+$exampleApi->setOption('note', 'hello');
+$noted = (new Compiler())->compilePage((int) $home['id'], false);
+expectContains('compile hook note', $noted, '<!-- example:hello -->');
+$previewNoted = (new Compiler())->compilePage((int) $home['id'], true);
+expect('compile hook skips preview', str_contains($previewNoted, 'example:hello'), false);
+
+PluginHooks::listen(PluginHooks::COMPILE_HTML, static function (): void {
+    throw new RuntimeException('boom');
+}, 5, 'bad', 'filter');
+$isolated = (new Compiler())->compilePage((int) $home['id'], false);
+expectContains('throwing listener isolated', $isolated, '<!-- example:hello -->');
+expectContains('listener error recorded', PluginHooks::errors()['bad'] ?? '', 'boom');
+PluginHooks::forget('bad');
+
+PluginHooks::listen(PluginHooks::PUBLISH_BEFORE, static function (): void {
+    throw new RuntimeException('publish-boom');
+}, 10, 'pub', 'action');
+$republish = (new Publisher())->publishPage((int) $home['id']);
+expect('publish survived listener', $republish['ok'] ?? false, true);
+expectContains('publish listener error', PluginHooks::errors()['pub'] ?? '', 'publish-boom');
+PluginHooks::forget('pub');
+$exampleApi->setOption('note', null);
+
+if (class_exists('ZipArchive')) {
+    $slip = $installDir . '/slip.zip';
+    $slipZip = new ZipArchive();
+    $slipZip->open($slip, ZipArchive::CREATE);
+    $slipZip->addFromString('../evil.php', '<?php echo 1;');
+    $slipZip->addFromString('plugin.json', '{}');
+    $slipZip->close();
+    try {
+        Plugins::installZip([
+            'name' => 'slip.zip',
+            'tmp_name' => $slip,
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($slip),
+        ]);
+        expect('zip slip rejected', false, true);
+    } catch (PluginException $e) {
+        expectContains('zip slip rejected', $e->getMessage(), 'unsafe');
+    }
+    expect('zip slip did not escape', is_file($installDir . '/evil.php') || is_file($installDir . '/data/evil.php'), false);
+
+    $noteSrc = $installDir . '/note-src';
+    mkdir($noteSrc, 0755, true);
+    file_put_contents($noteSrc . '/Plugin.php', "<?php\nclass NotePlugin implements SneezePlugin { public function boot(PluginApi \$api): void {} }\n");
+    file_put_contents($noteSrc . '/plugin.json', json_encode([
+        'id' => 'note',
+        'name' => 'Note',
+        'version' => '0.1.0',
+        'description' => 'Installed from zip',
+        'api' => 1,
+        'entry' => 'Plugin.php',
+        'class' => 'NotePlugin',
+        'capabilities' => [],
+    ]));
+    $noteZipPath = $installDir . '/note.zip';
+    $noteZip = new ZipArchive();
+    $noteZip->open($noteZipPath, ZipArchive::CREATE);
+    $noteZip->addFile($noteSrc . '/plugin.json', 'wrapped/plugin.json');
+    $noteZip->addFile($noteSrc . '/Plugin.php', 'wrapped/Plugin.php');
+    $noteZip->close();
+    $installed = Plugins::installZip([
+        'name' => 'note.zip',
+        'tmp_name' => $noteZipPath,
+        'error' => UPLOAD_ERR_OK,
+        'size' => filesize($noteZipPath),
+    ]);
+    expect('zip install id', $installed['id'], 'note');
+    expect('zip install disabled', $installed['enabled'], false);
+    expect('zip install origin', $installed['origin'], 'user');
+    expect('zip class not loaded yet', class_exists('NotePlugin', false), false);
+    expect('example still enabled after install', pluginById(Plugins::listPayload(false)['plugins'], 'example')['enabled'] ?? false, true);
+    $noteEnabled = Plugins::enable('note');
+    expect('zip plugin enabled', $noteEnabled['enabled'], true);
+    expect('zip class loaded', class_exists('NotePlugin', false), true);
+    Plugins::delete('note');
+    expect('zip plugin removed', pluginById(Plugins::listPayload(false)['plugins'], 'note'), null);
+    expect('zip files removed', is_dir($installDir . '/data/plugins/note'), false);
+} else {
+    echo "skip plugin zip (ZipArchive missing)\n";
+}
+
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);
+
+function copyPluginDir(string $from, string $to): void
+{
+    if (!is_dir($to) && !mkdir($to, 0755, true) && !is_dir($to)) {
+        throw new RuntimeException('Could not copy plugin directory');
+    }
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($from, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    foreach ($iterator as $item) {
+        $dest = $to . '/' . $iterator->getSubPathname();
+        if ($item->isDir()) {
+            if (!is_dir($dest)) {
+                mkdir($dest, 0755, true);
+            }
+            continue;
+        }
+        $parent = dirname($dest);
+        if (!is_dir($parent)) {
+            mkdir($parent, 0755, true);
+        }
+        copy($item->getPathname(), $dest);
+    }
+}
+
+function pluginById(array $plugins, string $id): ?array
+{
+    foreach ($plugins as $plugin) {
+        if (($plugin['id'] ?? '') === $id) {
+            return $plugin;
+        }
+    }
+    return null;
+}
 
 function w3cErrors(string $html): array
 {

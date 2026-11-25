@@ -38,6 +38,7 @@ $user = Auth::user();
       <button type="button" class="studio-workspaces__btn" data-workspace="media">Media</button>
       <button type="button" class="studio-workspaces__btn" data-workspace="cms">CMS</button>
       <button type="button" class="studio-workspaces__btn admin-only hidden" data-workspace="users">Users</button>
+      <button type="button" class="studio-workspaces__btn admin-only hidden" data-workspace="plugins">Plugins</button>
       <button type="button" class="studio-workspaces__btn admin-only hidden" data-workspace="settings">Settings</button>
     </nav>
 
@@ -427,6 +428,23 @@ $user = Auth::user();
           <button type="submit" class="btn btn--primary">Add user</button>
         </div>
       </form>
+    </section>
+  </div>
+
+  <!-- Plugins -->
+  <div class="workspace workspace--scroll" id="workspace-plugins">
+    <section class="card card--flat">
+      <h3>Plugins</h3>
+      <p class="muted" id="plugins-api">Plugin API</p>
+      <p class="muted">Drop a folder in <code>data/plugins/{id}</code> or upload a zip. Installed plugins survive Update Sneeze. Enable a plugin to load it.</p>
+      <div class="contact-form__field">
+        <label for="plugin-zip">Plugin zip</label>
+        <input type="file" id="plugin-zip" accept=".zip,application/zip">
+      </div>
+      <div class="contact-form__actions">
+        <button type="button" class="btn btn--primary btn--sm" id="btn-install-plugin">Install</button>
+      </div>
+      <div id="plugin-list" class="plugin-list"></div>
     </section>
   </div>
 

@@ -1,5 +1,6 @@
 import { api, setCsrf, showStatus, hideStatus, apiUrl } from './api.js';
 import { defaultData, renderFields, flattenTokens, unflattenTokens } from './fields.js';
+import { emitStudio, mountPlugins } from './plugins.js';
 
 const state = {
   user: null,
@@ -89,6 +90,7 @@ async function init() {
     bindCms();
     bindUsers();
     bindSettings();
+    bindPlugins();
     bindImport();
     await Promise.all([
       loadTypes(),
@@ -96,6 +98,7 @@ async function init() {
       loadPages(),
       loadCmsSources(),
       isAdmin() ? loadDesign() : Promise.resolve(),
+      mountPlugins(pluginHost()).catch((error) => showStatus(toast, error.message, true)),
     ]);
     if (state.pages[0]) await openPage(state.pages[0].id);
   } catch (e) {
@@ -159,8 +162,51 @@ function switchWorkspace(name) {
   if (name === 'media') loadMedia();
   if (name === 'cms') loadCms();
   if (name === 'users') loadUsers();
+  if (name === 'plugins') loadPlugins();
   if (name === 'settings') loadSettings();
   if (name === 'studio') setTimeout(() => state.codeEditor?.refresh(), 50);
+}
+
+function pluginHost() {
+  return {
+    isAdmin: isAdmin(),
+    getState: () => ({
+      page: state.page,
+      selectedId: state.selectedId,
+      templates: state.templates,
+      blockTypes: state.blockTypes,
+    }),
+    applyPage: (partial) => applyPluginPage(partial),
+    openPage: (id) => openPage(id),
+    notify: (message, isError) => showStatus(toast, message, !!isError),
+  };
+}
+
+function applyPluginPage(partial) {
+  if (!state.page || !partial || typeof partial !== 'object') return;
+  [
+    'title', 'slug', 'seo_title', 'seo_description', 'template_id', 'custom_css', 'custom_js',
+    'header_mode', 'footer_mode', 'header_html', 'footer_html',
+    'disabled_stylesheet_ids', 'disabled_script_ids', 'blocks',
+  ].forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(partial, key)) {
+      state.page[key] = partial[key];
+    }
+  });
+  document.getElementById('page-title').value = state.page.title || '';
+  document.getElementById('page-slug').value = state.page.slug || '';
+  document.getElementById('page-seo').value = state.page.seo_description || '';
+  document.getElementById('page-header-mode').value = state.page.header_mode || 'inherit';
+  document.getElementById('page-footer-mode').value = state.page.footer_mode || 'inherit';
+  document.getElementById('page-header-html').value = state.page.header_html || '';
+  document.getElementById('page-footer-html').value = state.page.footer_html || '';
+  syncChromeModeUi();
+  if (!findBlock(state.selectedId)) {
+    state.selectedId = state.page.blocks?.[0]?.id ?? null;
+  }
+  renderOutline();
+  renderWrite();
+  markDirty();
 }
 
 function bindStudio() {
@@ -334,6 +380,7 @@ async function openPage(id) {
   renderOutline();
   renderWrite();
   await refreshPreview();
+  emitStudio('page', state.page);
 }
 
 function renderPalette() {
@@ -579,6 +626,7 @@ function selectBlock(id) {
   renderWrite();
   const frame = document.getElementById('preview-frame');
   frame.contentWindow?.postMessage({ type: 'sneeze:highlight', id: String(id) }, '*');
+  emitStudio('selection', { id, block: findBlock(id) });
 }
 
 function moveBlock(id, dir) {
@@ -881,6 +929,7 @@ async function saveDraft(silent) {
     setSaveState('Saved');
     await loadPages();
     renderOutline();
+    emitStudio('saved', state.page);
     if (!silent) showStatus(toast, 'Draft saved');
   } catch (e) {
     setSaveState('Save failed');
@@ -1651,6 +1700,144 @@ function bindImport() {
     } catch (err) {
       showStatus(toast, err.message, true);
     }
+  });
+}
+
+function bindPlugins() {
+  document.getElementById('btn-install-plugin')?.addEventListener('click', async () => {
+    const input = document.getElementById('plugin-zip');
+    const file = input?.files?.[0];
+    if (!file) {
+      showStatus(toast, 'Choose a plugin zip first', true);
+      return;
+    }
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      await api('api/plugins/upload', { method: 'POST', body: form });
+      if (input) input.value = '';
+      showStatus(toast, 'Plugin installed. Enable it to load it.');
+      await loadPlugins();
+    } catch (error) {
+      showStatus(toast, error.message, true);
+    }
+  });
+}
+
+async function loadPlugins() {
+  const data = await api('api/plugins');
+  const version = document.getElementById('plugins-api');
+  if (version) version.textContent = `Plugin API ${data.api_version}`;
+  const list = document.getElementById('plugin-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!data.plugins?.length) {
+    list.innerHTML = '<p class="muted">No plugins found.</p>';
+    return;
+  }
+  data.plugins.forEach((plugin) => {
+    const card = document.createElement('article');
+    card.className = 'card card--flat';
+    const head = document.createElement('div');
+    head.className = 'plugin-card__head';
+    const title = document.createElement('div');
+    title.innerHTML = `<strong></strong> <span class="muted"></span><p class="muted"></p>`;
+    title.querySelector('strong').textContent = plugin.name || plugin.id;
+    title.querySelector('span').textContent = `v${plugin.version || '0'} · API ${plugin.api ?? '—'} · ${plugin.origin}`;
+    title.querySelector('p').textContent = plugin.description || '';
+    head.appendChild(title);
+    const actions = document.createElement('div');
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn--primary btn--sm';
+    toggle.textContent = plugin.enabled ? 'Disable' : 'Enable';
+    toggle.addEventListener('click', async () => {
+      try {
+        await api(`api/plugins/${plugin.id}/${plugin.enabled ? 'disable' : 'enable'}`, { method: 'POST' });
+        await loadPlugins();
+        await mountPlugins(pluginHost());
+      } catch (error) {
+        showStatus(toast, error.message, true);
+      }
+    });
+    actions.appendChild(toggle);
+    if (plugin.origin === 'user') {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn--ghost btn--sm';
+      remove.textContent = 'Delete';
+      remove.style.marginLeft = '0.4rem';
+      remove.addEventListener('click', async () => {
+        if (!window.confirm(`Delete ${plugin.name || plugin.id}?`)) return;
+        try {
+          await api(`api/plugins/${plugin.id}`, { method: 'DELETE' });
+          await loadPlugins();
+          await mountPlugins(pluginHost());
+        } catch (error) {
+          showStatus(toast, error.message, true);
+        }
+      });
+      actions.appendChild(remove);
+    }
+    head.appendChild(actions);
+    card.appendChild(head);
+    if (plugin.error) {
+      const err = document.createElement('p');
+      err.className = 'plugin-card__error';
+      err.textContent = plugin.error;
+      card.appendChild(err);
+    }
+    (plugin.settings || []).forEach((setting) => {
+      const field = document.createElement('div');
+      field.className = 'contact-form__field';
+      const label = document.createElement('label');
+      label.textContent = setting.label;
+      label.htmlFor = `plugin-setting-${plugin.id}-${setting.key}`;
+      const input = document.createElement('input');
+      input.id = label.htmlFor;
+      input.dataset.pluginSetting = setting.key;
+      if (setting.type === 'checkbox') {
+        input.type = 'checkbox';
+        input.checked = !!setting.value;
+      } else if (setting.type === 'number') {
+        input.type = 'number';
+        input.value = setting.value ?? '';
+      } else if (setting.type === 'secret') {
+        input.type = 'password';
+        input.placeholder = setting.set ? 'Saved — leave blank to keep' : '';
+        input.autocomplete = 'off';
+      } else {
+        input.type = 'text';
+        input.value = setting.value ?? '';
+      }
+      field.appendChild(label);
+      field.appendChild(input);
+      card.appendChild(field);
+    });
+    if ((plugin.settings || []).length) {
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'btn btn--ghost btn--sm';
+      save.textContent = 'Save settings';
+      save.addEventListener('click', async () => {
+        const body = {};
+        card.querySelectorAll('[data-plugin-setting]').forEach((input) => {
+          body[input.dataset.pluginSetting] = input.type === 'checkbox' ? input.checked : input.value;
+        });
+        try {
+          await api(`api/plugins/${plugin.id}/settings`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+          showStatus(toast, 'Plugin settings saved');
+          await loadPlugins();
+        } catch (error) {
+          showStatus(toast, error.message, true);
+        }
+      });
+      card.appendChild(save);
+    }
+    list.appendChild(card);
   });
 }
 
