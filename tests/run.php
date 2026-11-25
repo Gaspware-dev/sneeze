@@ -384,6 +384,15 @@ expect('plugin asset uri kept', Plugins::normalizeUri('/plugin-assets/example/pa
 expect('subdir api uri stripped', Plugins::normalizeUri('/sneeze/api/plugins', '/sneeze/index.php'), '/api/plugins');
 expect('example manifest id', $parsedExample['id'], 'example');
 expect('example manifest api', $parsedExample['api'], PluginApi::VERSION);
+$exampleTone = null;
+foreach ($parsedExample['settings'] as $setting) {
+    if (($setting['key'] ?? '') === 'tone') {
+        $exampleTone = $setting;
+    }
+}
+expect('example tone type', $exampleTone['type'] ?? '', 'select');
+expect('example tone option', $exampleTone['options'][0]['value'] ?? '', 'plain');
+expect('example tone label', $exampleTone['options'][0]['label'] ?? '', 'plain');
 
 $publicMethods = [];
 foreach ((new ReflectionClass(PluginApi::class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
@@ -426,6 +435,13 @@ $referenceDoc = Plugins::referencePayload();
 expect('reference api version', $referenceDoc['api_version'], 1);
 expect('reference has client', count($referenceDoc['client']) >= 8, true);
 expect('reference has notes', count($referenceDoc['notes']) >= 1, true);
+$clientNames = array_column($referenceDoc['client'], 'name');
+foreach (['sneeze.stream', 'sneeze.studio.patchBlockData', 'sneeze.studio.undoCheckpoint', 'sneeze.studio.openWorkspace', 'sneeze.studio.openSideTab'] as $clientName) {
+    expect('client documents ' . $clientName, in_array($clientName, $clientNames, true), true);
+}
+$noteText = implode("\n", $referenceDoc['notes']);
+expectContains('reference mentions execution time', $noteText, 'max_execution_time');
+expectContains('reference mentions stream', $noteText, 'sneeze.stream');
 
 $fixture = $installDir . '/manifest-fixtures';
 mkdir($fixture . '/escape', 0755, true);
@@ -635,6 +651,175 @@ if (class_exists('ZipArchive')) {
 } else {
     echo "skip plugin zip (ZipArchive missing)\n";
 }
+
+$headingType = null;
+foreach (BlockTypeRepository::all() as $type) {
+    if (($type['slug'] ?? '') === 'heading') {
+        $headingType = $type;
+    }
+}
+expect('heading type seeded', $headingType !== null, true);
+$draftTree = [
+    [
+        'id' => 1,
+        'block_type_id' => (int) $headingType['id'],
+        'slot' => 'content',
+        'data' => ['text' => 'A', 'level' => 'h2'],
+        'children' => [],
+    ],
+    [
+        'id' => 2,
+        'block_type_id' => (int) $headingType['id'],
+        'slot' => 'content',
+        'data' => ['text' => 'B', 'level' => 'h2'],
+        'children' => [
+            [
+                'id' => 3,
+                'slot' => 'content',
+                'data' => ['text' => 'C', 'level' => 'h3'],
+                'children' => [],
+            ],
+        ],
+    ],
+];
+$patchedTree = PluginDraft::patchBlockData($draftTree, 1, ['text' => 'A2']);
+expect('patch changes target', $patchedTree[0]['data']['text'], 'A2');
+expect('patch keeps other keys', $patchedTree[0]['data']['level'], 'h2');
+expect('patch leaves sibling', $patchedTree[1]['data']['text'], 'B');
+expect('patch leaves child', $patchedTree[1]['children'][0]['data']['text'], 'C');
+expect('patch leaves source', $draftTree[0]['data']['text'], 'A');
+$replacedTree = PluginDraft::updateBlockData($draftTree, 2, ['text' => 'only']);
+expect('update replaces data', $replacedTree[1]['data'], ['text' => 'only']);
+expect('update leaves sibling', $replacedTree[0]['data']['text'], 'A');
+$removedTree = PluginDraft::removeBlock($draftTree, 2);
+expect('remove drops block', count($removedTree), 1);
+expect('remove keeps sibling', $removedTree[0]['id'], 1);
+$insertedTree = PluginDraft::insertBlock($draftTree, [
+    'slug' => 'heading',
+    'index' => 0,
+    'data' => ['text' => 'New'],
+]);
+expect('insert at index', $insertedTree[0]['data']['text'], 'New');
+expect('insert uses negative id', $insertedTree[0]['id'] < 0, true);
+expect('insert shifts sibling', $insertedTree[1]['id'], 1);
+expect('insert keeps following', $insertedTree[2]['id'], 2);
+expect('insert leaves source count', count($draftTree), 2);
+$childTree = PluginDraft::insertBlock($draftTree, [
+    'type_id' => (int) $headingType['id'],
+    'parent_id' => 2,
+    'index' => 0,
+    'data' => ['text' => 'Child'],
+]);
+expect('insert under parent', $childTree[1]['children'][0]['data']['text'], 'Child');
+expect('insert keeps previous child', $childTree[1]['children'][1]['id'], 3);
+$writer = PluginApi::forPlugin([
+    'id' => 'writer',
+    'name' => 'Writer',
+    'version' => '1',
+    'capabilities' => ['site.write'],
+], $installDir);
+expect('api patch matches helper', $writer->patchBlockData($draftTree, 1, ['text' => 'A2'])[0]['data']['text'], 'A2');
+try {
+    PluginDraft::removeBlock($draftTree, 99);
+    expect('missing block rejected', false, true);
+} catch (PluginException $e) {
+    expectContains('missing block rejected', $e->getMessage(), 'not found');
+}
+try {
+    PluginDraft::insertBlock($draftTree, ['slug' => 'heading', 'parent_id' => 99]);
+    expect('missing parent rejected', false, true);
+} catch (PluginException $e) {
+    expectContains('missing parent rejected', $e->getMessage(), 'Parent');
+}
+
+$png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
+$imported = $writer->importMediaBytes('pixel.png', $png);
+expect('media bytes mime', $imported['mime'] ?? '', 'image/png');
+expect('media bytes stored', is_file(Config::dataDir() . '/uploads/' . ($imported['storage_key'] ?? '')), true);
+try {
+    $writer->importMediaFromUrl('file:///etc/passwd');
+    expect('media url rejects file scheme', false, true);
+} catch (PluginException $e) {
+    expectContains('media url rejects file scheme', $e->getMessage(), 'http');
+}
+try {
+    $writer->importMediaFromUrl('ftp://example.com/a.png');
+    expect('media url rejects ftp', false, true);
+} catch (PluginException $e) {
+    expectContains('media url rejects ftp', $e->getMessage(), 'http');
+}
+$toolchainOff = $writer->saveToolchain(['typescript' => false]);
+expect('toolchain saved off', $toolchainOff['typescript'] ?? true, false);
+$toolchainOn = $writer->saveToolchain(['typescript' => true]);
+expect('toolchain saved on', $toolchainOn['typescript'] ?? false, true);
+
+$selectDir = $installDir . '/plugins/selectdemo';
+mkdir($selectDir, 0755, true);
+file_put_contents($selectDir . '/Plugin.php', "<?php\nclass SelectDemoPlugin implements SneezePlugin { public function boot(PluginApi \$api): void {} }\n");
+file_put_contents($selectDir . '/plugin.json', json_encode([
+    'id' => 'selectdemo',
+    'name' => 'Select demo',
+    'version' => '1',
+    'description' => '',
+    'api' => 1,
+    'entry' => 'Plugin.php',
+    'class' => 'SelectDemoPlugin',
+    'capabilities' => [],
+    'settings' => [[
+        'key' => 'provider',
+        'label' => 'Provider',
+        'type' => 'select',
+        'options' => ['openai', ['value' => 'mistral', 'label' => 'Mistral']],
+    ]],
+]));
+$selectManifest = PluginManifest::parse($selectDir);
+expect('select string option', $selectManifest['settings'][0]['options'][0], ['value' => 'openai', 'label' => 'openai']);
+expect('select pair option', $selectManifest['settings'][0]['options'][1], ['value' => 'mistral', 'label' => 'Mistral']);
+$badSelect = $selectDir . '-bad';
+mkdir($badSelect, 0755, true);
+copy($selectDir . '/Plugin.php', $badSelect . '/Plugin.php');
+$badJson = json_decode((string) file_get_contents($selectDir . '/plugin.json'), true);
+$badJson['id'] = 'selectdemo-bad';
+$badJson['class'] = 'SelectDemoPlugin';
+$badJson['settings'][0]['options'] = [];
+file_put_contents($badSelect . '/plugin.json', json_encode($badJson));
+try {
+    PluginManifest::parse($badSelect);
+    expect('select requires options', false, true);
+} catch (PluginException $e) {
+    expectContains('select requires options', $e->getMessage(), 'options');
+}
+Plugins::reboot();
+Plugins::enable('selectdemo');
+$selectSaved = Plugins::saveSettings('selectdemo', ['provider' => 'mistral']);
+$providerRow = null;
+foreach ($selectSaved as $row) {
+    if (($row['key'] ?? '') === 'provider') {
+        $providerRow = $row;
+    }
+}
+expect('select setting saved', $providerRow['value'] ?? '', 'mistral');
+try {
+    Plugins::saveSettings('selectdemo', ['provider' => 'nope']);
+    expect('select rejects unknown', false, true);
+} catch (PluginException $e) {
+    expectContains('select rejects unknown', $e->getMessage(), 'listed');
+}
+expect('select keeps previous', PluginApi::forPlugin($selectManifest, $selectDir)->option('provider'), 'mistral');
+
+expect('slow route streams', Plugins::routeStreams('GET', '/api/plugin/example/slow'), true);
+expect('ping route is json', Plugins::routeStreams('GET', '/api/plugin/example/ping'), false);
+$slow = Plugins::invoke('GET', '/api/plugin/example/slow');
+expect('slow returns generator', $slow instanceof Generator, true);
+$slowEvents = [];
+foreach ($slow as $event) {
+    $slowEvents[] = $event;
+}
+expect('slow event count', count($slowEvents), 2);
+expect('slow event done', $slowEvents[1]['done'] ?? false, true);
+$encoded = Plugins::encodeEvent($slowEvents[0]) . Plugins::encodeEvent($slowEvents[1]);
+expectContains('sse data line', $encoded, 'data: {"step":1}');
+expect('sse frames', substr_count($encoded, "\n\n"), 2);
 
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);

@@ -27,7 +27,7 @@ class Plugins
     private static array $records = [];
 
     /**
-     * @var array<string, array{plugin: string, handler: callable, admin: bool}>
+     * @var array<string, array{plugin: string, handler: callable, admin: bool, stream: bool}>
      */
     private static array $routes = [];
 
@@ -210,7 +210,7 @@ class Plugins
             if ($field['type'] === 'secret' && ($body[$key] === '' || $body[$key] === null)) {
                 continue;
             }
-            $api->setOption($key, self::coerceSetting($field['type'], $body[$key]));
+            $api->setOption($key, self::coerceSetting($field, $body[$key]));
         }
         return self::settingsFor($manifest);
     }
@@ -246,13 +246,14 @@ class Plugins
                 'An enabled plugin is trusted PHP running inside Sneeze. Capabilities guard PluginApi. They are not a sandbox.',
                 'Install plugins in data/plugins/{id} or upload a zip. That directory survives Update Sneeze. A copy there overrides plugins/{id}.',
                 'Studio scripts are ES modules served from plugin-assets/{id}/. The default export is boot(sneeze).',
-                'Plugin routes are /api/plugin/{id}/{path}. They require a signed-in user. Requests that are not GET require the studio CSRF header.',
+                'Plugin routes are /api/plugin/{id}/{path}. They require a signed-in user. Requests that are not GET require the studio CSRF header. The handler receives the JSON body, the query, and $_FILES.',
+                'A JSON plugin route ends when PHP max_execution_time does, often 30 seconds. sneeze.api has no client timeout. A route with stream: true answers text/event-stream, lifts that limit for the request, and holds one PHP worker until the generator finishes. A reverse proxy can still close the connection. Read it with sneeze.stream.',
                 'GET /api/plugins/reference returns this document. Render it for Plugin API documentation.',
             ],
         ];
     }
 
-    public static function addRoute(string $pluginId, string $method, string $path, callable $handler, bool $admin): void
+    public static function addRoute(string $pluginId, string $method, string $path, callable $handler, bool $admin, bool $stream = false): void
     {
         $method = strtoupper($method);
         if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], true)) {
@@ -266,7 +267,22 @@ class Plugins
             'plugin' => $pluginId,
             'handler' => $handler,
             'admin' => $admin,
+            'stream' => $stream,
         ];
+    }
+
+    /**
+     * One Server-Sent Event. json_encode keeps the payload on a single data line.
+     *
+     * @param array<string, mixed> $event
+     */
+    public static function encodeEvent(array $event): string
+    {
+        $json = json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            $json = '{}';
+        }
+        return 'data: ' . $json . "\n\n";
     }
 
     /**
@@ -289,17 +305,25 @@ class Plugins
 
     /**
      * Call a matched route handler. The HTTP layer checks auth and CSRF first.
+     * A stream route returns its generator. dispatch() is what sends the events.
      *
      * @param array<string, mixed> $body
      * @param array<string, mixed> $query
+     * @param array<string, mixed> $files
      */
-    public static function invoke(string $method, string $uri, array $body = [], array $query = []): mixed
+    public static function invoke(string $method, string $uri, array $body = [], array $query = [], array $files = []): mixed
     {
         $route = self::findRoute($method, $uri);
         if ($route === null) {
             throw new PluginException('Plugin route not found');
         }
-        return ($route['handler'])($body, $query);
+        return ($route['handler'])($body, $query, $files);
+    }
+
+    public static function routeStreams(string $method, string $uri): bool
+    {
+        $route = self::findRoute($method, $uri);
+        return $route !== null && !empty($route['stream']);
     }
 
     public static function dispatch(string $method, string $uri): void
@@ -311,10 +335,17 @@ class Plugins
         if ($route['admin']) {
             Auth::requireAdmin();
         }
+        $files = isset($_FILES) && is_array($_FILES) ? $_FILES : [];
         try {
-            $result = ($route['handler'])(self::jsonBody(), $_GET);
+            $result = ($route['handler'])(self::jsonBody(), $_GET, $files);
         } catch (PluginException $e) {
             Response::error($e->getMessage());
+        }
+        if (!empty($route['stream'])) {
+            if ($result instanceof Traversable || (is_array($result) && array_is_list($result))) {
+                self::sendStream($result);
+            }
+            Response::error('Plugin stream must return events', 500);
         }
         if (is_string($result)) {
             Response::html($result);
@@ -323,6 +354,36 @@ class Plugins
             Response::json($result);
         }
         Response::error('Plugin route must return an array or a string', 500);
+    }
+
+    /**
+     * @param iterable<mixed> $events
+     */
+    public static function sendStream(iterable $events): void
+    {
+        set_time_limit(0);
+        @ini_set('zlib.output_compression', '0');
+        @ini_set('implicit_flush', '1');
+        while (ob_get_level() > 0) {
+            ob_end_flush();
+        }
+        http_response_code(200);
+        header('Content-Type: text/event-stream; charset=utf-8');
+        header('Cache-Control: no-cache');
+        header('X-Accel-Buffering: no');
+        try {
+            foreach ($events as $event) {
+                if (!is_array($event)) {
+                    continue;
+                }
+                echo self::encodeEvent($event);
+                flush();
+            }
+        } catch (PluginException $e) {
+            echo self::encodeEvent(['error' => $e->getMessage()]);
+            flush();
+        }
+        exit;
     }
 
     public static function serveAsset(string $uri): void
@@ -438,19 +499,44 @@ class Plugins
             } else {
                 $row['value'] = $value;
             }
+            if ($field['type'] === 'select') {
+                $row['options'] = $field['options'] ?? [];
+            }
             $out[] = $row;
         }
         return $out;
     }
 
-    private static function coerceSetting(string $type, mixed $value): mixed
+    /**
+     * @param array<string, mixed> $field
+     */
+    private static function coerceSetting(array $field, mixed $value): mixed
     {
+        $type = (string) ($field['type'] ?? '');
         return match ($type) {
             'number' => is_numeric($value) ? 0 + $value : throw new PluginException('Setting must be a number'),
             'checkbox' => (bool) $value,
             'secret', 'text' => is_scalar($value) ? (string) $value : throw new PluginException('Setting must be text'),
+            'select' => self::coerceSelect(is_array($field['options'] ?? null) ? $field['options'] : [], $value),
             default => throw new PluginException('Setting type is invalid'),
         };
+    }
+
+    /**
+     * @param list<array{value?: string, label?: string}> $options
+     */
+    private static function coerceSelect(array $options, mixed $value): string
+    {
+        if (!is_scalar($value)) {
+            throw new PluginException('Setting must be one of the listed options');
+        }
+        $value = (string) $value;
+        foreach ($options as $option) {
+            if (is_array($option) && (string) ($option['value'] ?? '') === $value) {
+                return $value;
+            }
+        }
+        throw new PluginException('Setting must be one of the listed options');
     }
 
     private static function discoverAndBoot(): void
@@ -553,7 +639,7 @@ class Plugins
     }
 
     /**
-     * @return array{plugin: string, handler: callable, admin: bool}|null
+     * @return array{plugin: string, handler: callable, admin: bool, stream: bool}|null
      */
     private static function findRoute(string $method, string $uri): ?array
     {

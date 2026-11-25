@@ -14,6 +14,7 @@ const state = {
   previewTimer: null,
   saveTimer: null,
   tempId: -1,
+  checkpoints: [],
   codeEditor: null,
   mediaPicker: null,
   design: { tokens: {}, stylesheets: [], scripts: [], chrome: { header_html: '', footer_html: '' } },
@@ -176,23 +177,23 @@ function pluginHost() {
       templates: state.templates,
       blockTypes: state.blockTypes,
     }),
-    applyPage: (partial) => applyPluginPage(partial),
+    applyPage: (partial, options) => applyPluginPage(partial, options),
+    insertBlock: (spec, options) => pluginInsertBlock(spec, options),
+    updateBlockData: (id, data, options) => pluginUpdateBlockData(id, data, options),
+    patchBlockData: (id, partial, options) => pluginPatchBlockData(id, partial, options),
+    removeBlock: (id, options) => pluginRemoveBlock(id, options),
+    selectBlock: (id) => selectBlock(id),
     openPage: (id) => openPage(id),
+    openSideTab: (name) => openPluginSideTab(name),
+    openWorkspace: (name) => openPluginWorkspace(name),
+    pushCheckpoint: () => pushCheckpoint(),
+    undoCheckpoint: () => undoCheckpoint(),
     notify: (message, isError) => showStatus(toast, message, !!isError),
   };
 }
 
-function applyPluginPage(partial) {
-  if (!state.page || !partial || typeof partial !== 'object') return;
-  [
-    'title', 'slug', 'seo_title', 'seo_description', 'template_id', 'custom_css', 'custom_js',
-    'header_mode', 'footer_mode', 'header_html', 'footer_html',
-    'disabled_stylesheet_ids', 'disabled_script_ids', 'blocks',
-  ].forEach((key) => {
-    if (Object.prototype.hasOwnProperty.call(partial, key)) {
-      state.page[key] = partial[key];
-    }
-  });
+function syncDraftForm() {
+  if (!state.page) return;
   document.getElementById('page-title').value = state.page.title || '';
   document.getElementById('page-slug').value = state.page.slug || '';
   document.getElementById('page-seo').value = state.page.seo_description || '';
@@ -201,12 +202,140 @@ function applyPluginPage(partial) {
   document.getElementById('page-header-html').value = state.page.header_html || '';
   document.getElementById('page-footer-html').value = state.page.footer_html || '';
   syncChromeModeUi();
+}
+
+function pushCheckpoint() {
+  if (!state.page) return false;
+  try {
+    state.checkpoints.push(JSON.parse(JSON.stringify(state.page)));
+  } catch {
+    return false;
+  }
+  if (state.checkpoints.length > 20) {
+    state.checkpoints.splice(0, state.checkpoints.length - 20);
+  }
+  return true;
+}
+
+function undoCheckpoint() {
+  const snapshot = state.checkpoints.pop();
+  if (!snapshot || !state.page) return false;
+  snapshot.id = state.page.id;
+  state.page = snapshot;
+  if (!findBlock(state.selectedId)) {
+    state.selectedId = state.page.blocks?.[0]?.id ?? null;
+  }
+  syncDraftForm();
+  renderOutline();
+  renderWrite();
+  markDirty();
+  refreshPreview();
+  return true;
+}
+
+function cssAttr(value) {
+  const text = String(value);
+  if (window.CSS?.escape) return window.CSS.escape(text);
+  return text.replace(/["\\]/g, '\\$&');
+}
+
+function openPluginSideTab(name) {
+  const btn = document.querySelector(`#side-tabs button[data-tab="${cssAttr(name)}"]`);
+  if (!btn) return false;
+  btn.click();
+  return true;
+}
+
+function openPluginWorkspace(name) {
+  const btn = document.querySelector(`#workspace-nav [data-workspace="${cssAttr(name)}"]`);
+  if (!btn) return false;
+  switchWorkspace(name);
+  return true;
+}
+
+function applyPluginPage(partial, options = {}) {
+  if (!state.page || !partial || typeof partial !== 'object') return false;
+  const keys = [
+    'title', 'slug', 'seo_title', 'seo_description', 'template_id', 'custom_css', 'custom_js',
+    'header_mode', 'footer_mode', 'header_html', 'footer_html',
+    'disabled_stylesheet_ids', 'disabled_script_ids', 'blocks',
+  ];
+  const present = keys.filter((key) => Object.prototype.hasOwnProperty.call(partial, key));
+  if (!present.length) return false;
+  if (options?.checkpoint !== false) pushCheckpoint();
+  present.forEach((key) => {
+    state.page[key] = partial[key];
+  });
+  syncDraftForm();
   if (!findBlock(state.selectedId)) {
     state.selectedId = state.page.blocks?.[0]?.id ?? null;
   }
   renderOutline();
   renderWrite();
   markDirty();
+  refreshPreview();
+  return true;
+}
+
+function pluginInsertBlock(spec, options = {}) {
+  if (!state.page || !spec || typeof spec !== 'object') return null;
+  const typeId = spec.typeId ?? spec.type_id;
+  const type = typeId != null && typeId !== ''
+    ? state.blockTypes.find((item) => String(item.id) === String(typeId))
+    : state.blockTypes.find((item) => item.slug === spec.slug);
+  if (!type) return null;
+  const rawParent = spec.parentId ?? spec.parent_id ?? null;
+  const parentId = rawParent == null || rawParent === '' || rawParent === 0 || rawParent === '0' || rawParent === 'null'
+    ? null
+    : rawParent;
+  if (parentId && !findBlock(parentId)) return null;
+  const slot = spec.slot || 'content';
+  const listInfo = siblingList(parentId, slot);
+  if (!listInfo) return null;
+  if (options?.checkpoint !== false) pushCheckpoint();
+  const node = createBlockNode(type, parentId, slot);
+  if (spec.data && typeof spec.data === 'object') {
+    node.data = { ...(node.data || {}), ...spec.data };
+  }
+  const slotCount = listInfo.list.filter(listInfo.filter).length;
+  const index = spec.index == null || !Number.isFinite(Number(spec.index)) ? slotCount : Number(spec.index);
+  insertIntoSlot(listInfo, node, index);
+  selectBlock(node.id);
+  markDirty();
+  refreshPreview();
+  return node.id;
+}
+
+function pluginUpdateBlockData(id, data, options = {}) {
+  const node = findBlock(id);
+  if (!node || !data || typeof data !== 'object') return false;
+  if (options?.checkpoint !== false) pushCheckpoint();
+  node.data = { ...data };
+  markDirty();
+  renderOutline();
+  renderWrite();
+  refreshPreview();
+  return true;
+}
+
+function pluginPatchBlockData(id, partial, options = {}) {
+  const node = findBlock(id);
+  if (!node || !partial || typeof partial !== 'object') return false;
+  if (options?.checkpoint !== false) pushCheckpoint();
+  node.data = { ...(node.data || {}), ...partial };
+  markDirty();
+  renderOutline();
+  renderWrite();
+  refreshPreview();
+  return true;
+}
+
+function pluginRemoveBlock(id, options = {}) {
+  if (!findBlock(id)) return false;
+  if (options?.checkpoint !== false) pushCheckpoint();
+  removeBlock(id);
+  refreshPreview();
+  return true;
 }
 
 function bindStudio() {
@@ -352,6 +481,7 @@ async function openPage(id) {
   state.page = data.page;
   state.selectedId = state.page.blocks?.[0]?.id ?? null;
   state.dirty = false;
+  state.checkpoints = [];
   document.getElementById('page-select').value = String(id);
   document.getElementById('page-title').value = state.page.title || '';
   document.getElementById('page-slug').value = state.page.slug || '';
@@ -1793,25 +1923,39 @@ async function loadPlugins() {
       const label = document.createElement('label');
       label.textContent = setting.label;
       label.htmlFor = `plugin-setting-${plugin.id}-${setting.key}`;
-      const input = document.createElement('input');
-      input.id = label.htmlFor;
-      input.dataset.pluginSetting = setting.key;
-      if (setting.type === 'checkbox') {
-        input.type = 'checkbox';
-        input.checked = !!setting.value;
-      } else if (setting.type === 'number') {
-        input.type = 'number';
-        input.value = setting.value ?? '';
-      } else if (setting.type === 'secret') {
-        input.type = 'password';
-        input.placeholder = setting.set ? 'Saved — leave blank to keep' : '';
-        input.autocomplete = 'off';
+      let control;
+      if (setting.type === 'select') {
+        control = document.createElement('select');
+        (setting.options || []).forEach((option) => {
+          const value = typeof option === 'string' ? option : option.value;
+          const text = typeof option === 'string' ? option : option.label;
+          const choice = document.createElement('option');
+          choice.value = value ?? '';
+          choice.textContent = text ?? value ?? '';
+          if (String(setting.value ?? '') === String(value ?? '')) choice.selected = true;
+          control.appendChild(choice);
+        });
       } else {
-        input.type = 'text';
-        input.value = setting.value ?? '';
+        control = document.createElement('input');
+        if (setting.type === 'checkbox') {
+          control.type = 'checkbox';
+          control.checked = !!setting.value;
+        } else if (setting.type === 'number') {
+          control.type = 'number';
+          control.value = setting.value ?? '';
+        } else if (setting.type === 'secret') {
+          control.type = 'password';
+          control.placeholder = setting.set ? 'Saved — leave blank to keep' : '';
+          control.autocomplete = 'off';
+        } else {
+          control.type = 'text';
+          control.value = setting.value ?? '';
+        }
       }
+      control.id = label.htmlFor;
+      control.dataset.pluginSetting = setting.key;
       field.appendChild(label);
-      field.appendChild(input);
+      field.appendChild(control);
       card.appendChild(field);
     });
     if ((plugin.settings || []).length) {

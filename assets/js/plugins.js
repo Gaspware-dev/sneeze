@@ -1,4 +1,4 @@
-import { api, apiUrl } from './api.js';
+import { api, apiUrl, stream } from './api.js';
 
 const studioListeners = {
   page: new Set(),
@@ -36,11 +36,38 @@ function studioBridge(host) {
         return raw;
       }
     },
-    applyPage(partial) {
-      host.applyPage(partial);
+    applyPage(partial, options) {
+      return host.applyPage(partial, options);
+    },
+    insertBlock(spec, options) {
+      return host.insertBlock(spec, options);
+    },
+    updateBlockData(id, data, options) {
+      return host.updateBlockData(id, data, options);
+    },
+    patchBlockData(id, partial, options) {
+      return host.patchBlockData(id, partial, options);
+    },
+    removeBlock(id, options) {
+      return host.removeBlock(id, options);
+    },
+    selectBlock(id) {
+      host.selectBlock(id);
     },
     openPage(id) {
       return host.openPage(id);
+    },
+    openSideTab(name) {
+      return host.openSideTab(name);
+    },
+    openWorkspace(name) {
+      return host.openWorkspace(name);
+    },
+    pushCheckpoint() {
+      return host.pushCheckpoint();
+    },
+    undoCheckpoint() {
+      return host.undoCheckpoint();
     },
     notify(message, isError = false) {
       host.notify(message, !!isError);
@@ -65,6 +92,7 @@ async function bootScript(contribution, studio) {
     if (typeof mod.default === 'function') {
       await mod.default({
         api,
+        stream,
         plugin: { id: contribution.plugin_id, name: contribution.plugin_name },
         studio,
       });
@@ -79,7 +107,7 @@ export async function mountPlugins(host) {
   resetStudioEvents();
   clearPluginUi();
   const studio = studioBridge(host);
-  window.Sneeze = { api, studio };
+  window.Sneeze = { api, stream, studio };
 
   let payload;
   try {

@@ -14,7 +14,7 @@ class PluginManifest
     public const CAPABILITIES = ['site.read', 'site.write', 'studio', 'routes', 'compile'];
 
     /** @var list<string> */
-    public const SETTING_TYPES = ['text', 'secret', 'number', 'checkbox'];
+    public const SETTING_TYPES = ['text', 'secret', 'number', 'checkbox', 'select'];
 
     /**
      * @var array<string, array{type: string, required: bool, summary: string}>
@@ -63,7 +63,7 @@ class PluginManifest
         'settings' => [
             'type' => 'list<{key, label, type}>',
             'required' => false,
-            'summary' => 'Options the Plugins screen edits. type is text, secret, number, or checkbox. Secret values are write-only in JSON.',
+            'summary' => 'Options the Plugins screen edits. type is text, secret, number, checkbox, or select. select requires options as strings or {value, label} pairs. Secret values are write-only in JSON.',
         ],
     ];
 
@@ -226,7 +226,11 @@ class PluginManifest
                 throw new PluginException('Duplicate setting key: ' . $key);
             }
             $seen[$key] = true;
-            $settings[] = ['key' => $key, 'label' => $label, 'type' => $type];
+            $row = ['key' => $key, 'label' => $label, 'type' => $type];
+            if ($type === 'select') {
+                $row['options'] = self::selectOptions($setting);
+            }
+            $settings[] = $row;
         }
 
         return [
@@ -240,6 +244,40 @@ class PluginManifest
             'capabilities' => array_values($capabilities),
             'settings' => $settings,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $setting
+     * @return list<array{value: string, label: string}>
+     */
+    private static function selectOptions(array $setting): array
+    {
+        $options = $setting['options'] ?? null;
+        if (!is_array($options) || !array_is_list($options) || $options === []) {
+            throw new PluginException('Select setting requires options');
+        }
+        $out = [];
+        $seen = [];
+        foreach ($options as $option) {
+            if (is_string($option)) {
+                $value = $option;
+                $label = $option;
+            } elseif (is_array($option)) {
+                $value = $option['value'] ?? '';
+                $label = $option['label'] ?? '';
+            } else {
+                throw new PluginException('Select option is invalid');
+            }
+            if (!is_string($value) || $value === '' || !is_string($label) || trim($label) === '') {
+                throw new PluginException('Select option is invalid');
+            }
+            if (isset($seen[$value])) {
+                throw new PluginException('Duplicate select option: ' . $value);
+            }
+            $seen[$value] = true;
+            $out[] = ['value' => $value, 'label' => trim($label)];
+        }
+        return $out;
     }
 
     /**
