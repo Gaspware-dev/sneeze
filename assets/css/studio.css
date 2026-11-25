@@ -111,6 +111,12 @@ body.studio-app {
   margin: 0.5rem 0 0;
 }
 
+.plugin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .preview-pane {
   display: flex;
   flex-direction: column;

@@ -139,6 +139,10 @@ Each plugin has a `plugin.json` and a class that implements `SneezePlugin`. The 
 
 `GET /api/plugins/reference` (admin) returns the manifest fields, core hooks, `PluginApi` methods, and the studio `boot(sneeze)` bridge. That payload is the source for Plugin API documentation.
 
+A JSON plugin route runs until PHP’s `max_execution_time` (often 30 seconds). The studio fetch has no client timeout. A route registered with `stream: true` answers as server-sent events, lifts that limit for the one request, and holds a PHP worker until it finishes. A reverse proxy can still close the connection. Studio scripts read it with `sneeze.stream`.
+
+`insertBlock`, `updateBlockData`, `patchBlockData`, and `removeBlock` edit a block tree in memory. The same names on `sneeze.studio` edit the open draft, refresh the preview, and keep an undo stack (`pushCheckpoint` / `undoCheckpoint`). `importMediaBytes` and `importMediaFromUrl` add files to the media library. `saveToolchain` writes the design toolchain. A setting of type `select` takes an `options` list.
+
 ## Updating Sneeze
 
 1. On GitHub, open the repo → **Code** → **Download ZIP** (or use a release zip with the same layout).

@@ -14,7 +14,13 @@ class ExamplePlugin implements SneezePlugin
             'id' => 'example',
             'label' => 'Example',
             'html' => '<p class="muted">Reference plugin. Open page: <strong id="example-page">…</strong></p>'
+                . '<p class="plugin-actions">'
                 . '<button type="button" class="btn btn--ghost btn--sm" id="example-ping">Ping</button>'
+                . '<button type="button" class="btn btn--ghost btn--sm" id="example-apply">Apply title</button>'
+                . '<button type="button" class="btn btn--ghost btn--sm" id="example-patch">Patch block</button>'
+                . '<button type="button" class="btn btn--ghost btn--sm" id="example-undo">Undo</button>'
+                . '<button type="button" class="btn btn--ghost btn--sm" id="example-stream">Stream</button>'
+                . '</p>'
                 . '<pre id="example-out"></pre>',
             'script' => 'assets/panel.js',
         ]);
@@ -34,6 +40,11 @@ class ExamplePlugin implements SneezePlugin
         $api->route('GET', 'admin-ping', function (): array {
             return ['ok' => true];
         }, ['admin' => true]);
+
+        $api->route('GET', 'slow', function (): Generator {
+            yield ['step' => 1];
+            yield ['step' => 2, 'done' => true];
+        }, ['stream' => true]);
 
         $api->filter(PluginHooks::COMPILE_HTML, function (mixed $html, array $context) use ($api): mixed {
             $note = trim((string) $api->option('note', ''));

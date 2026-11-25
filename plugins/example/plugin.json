@@ -12,6 +12,12 @@
       "key": "note",
       "label": "HTML note",
       "type": "text"
+    },
+    {
+      "key": "tone",
+      "label": "Tone",
+      "type": "select",
+      "options": ["plain", "friendly"]
     }
   ]
 }

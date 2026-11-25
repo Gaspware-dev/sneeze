@@ -79,10 +79,14 @@ class PluginApi
             self::method('hooks', 'on', 'Listen on an action. The listener is function (array $context): void.', 'hook: string, listener: callable, priority?: int', 'void', 'compile when the hook is in PluginHooks::catalog()'),
             self::method('hooks', 'apply', 'Run a filter, including a name this plugin invented. Lower priority runs first.', 'hook: string, value: mixed, context?: array', 'mixed', null),
             self::method('hooks', 'do', 'Run an action, including a name this plugin invented.', 'hook: string, context?: array', 'void', null),
-            self::method('routes', 'route', 'Handle /api/plugin/{id}/{path}. The handler is function (array $body, array $query): array|string. Auth is required. Non-GET requests require CSRF. opts.admin requires an admin.', 'method: string, path: string, handler: callable, opts?: {admin?: bool}', 'void', 'routes'),
+            self::method('routes', 'route', 'Handle /api/plugin/{id}/{path}. The handler is function (array $body, array $query, array $files): array|string. opts.stream returns a generator of event arrays and is sent as text/event-stream. Auth is required. Non-GET requests require CSRF. opts.admin requires an admin.', 'method: string, path: string, handler: callable, opts?: {admin?: bool, stream?: bool}', 'void', 'routes'),
             self::method('studio', 'workspace', 'Add a studio workspace. script and style are files under assets/. The script module default-exports boot(sneeze).', 'spec: {id: string, label: string, admin?: bool, html?: string, script?: string, style?: string}', 'void', 'studio'),
             self::method('studio', 'sideTab', 'Add a tab beside Blocks, Write, and Code. Same spec as workspace().', 'spec: {id: string, label: string, admin?: bool, html?: string, script?: string, style?: string}', 'void', 'studio'),
             self::method('studio', 'contributions', 'Workspaces and side tabs registered during boot(). The loader reads this.', '', '{workspaces: list, side_tabs: list}', null),
+            self::method('draft', 'insertBlock', 'Return a new block tree with one block inserted. Does not write the database. index counts blocks in the same slot. A missing index appends. The new block uses a negative id, which saveBlocks stores as an insert.', 'tree: list, spec: {type_id?: int, slug?: string, parent_id?: int|string|null, slot?: string, index?: int, data?: array}', 'list', null),
+            self::method('draft', 'updateBlockData', 'Return a new tree with one block data object replaced. Siblings stay. Does not write the database.', 'tree: list, id: int|string, data: array', 'list', null),
+            self::method('draft', 'patchBlockData', 'Return a new tree with keys merged into one block data object. Other keys and siblings stay. Does not write the database.', 'tree: list, id: int|string, partial: array', 'list', null),
+            self::method('draft', 'removeBlock', 'Return a new tree without that block or its children. Does not write the database.', 'tree: list, id: int|string', 'list', null),
             self::method('site.read', 'pages', 'Pages without block trees. Same rows as GET /api/pages.', '', 'list', 'site.read'),
             self::method('site.read', 'page', 'One page, including its block tree. Same shape as GET /api/pages/{id}.', 'id: int', 'array', 'site.read'),
             self::method('site.read', 'templates', 'Every template.', '', 'list', 'site.read'),
@@ -112,6 +116,9 @@ class PluginApi
             self::method('site.write', 'savePost', 'Create or update a built-in post. Same fields as POST /api/cms/posts.', 'data: array', 'array', 'site.write'),
             self::method('site.write', 'deletePost', 'Delete a built-in post.', 'id: int', 'void', 'site.write'),
             self::method('site.write', 'importMedia', 'Copy a file from this plugin directory into the studio media library.', 'relativePath: string', 'array', 'site.write'),
+            self::method('site.write', 'importMediaBytes', 'Store file bytes in the media library. Same 10 MB and file-type limits as an upload.', 'filename: string, contents: string', 'array', 'site.write'),
+            self::method('site.write', 'importMediaFromUrl', 'Download an http or https URL into the media library. Same 10 MB and file-type limits as an upload.', 'url: string, filename?: string', 'array', 'site.write'),
+            self::method('site.write', 'saveToolchain', 'Save toolchain settings: typescript, tailwind, and tailwind_config_ts.', 'data: array', 'array', 'site.write'),
             self::method('site.write', 'publish', 'Publish one page. Same result as POST /api/pages/{id}/publish.', 'pageId: int', 'array', 'site.write'),
             self::method('site.write', 'publishPosts', 'Publish built-in posts, the post index, the feed, and the sitemap.', '', 'array', 'site.write'),
         ];
@@ -279,7 +286,7 @@ class PluginApi
     /**
      * Register an exact route under /api/plugin/{id}/.
      *
-     * @param array{admin?: bool} $opts
+     * @param array{admin?: bool, stream?: bool} $opts
      */
     public function route(string $method, string $path, callable $handler, array $opts = []): void
     {
@@ -289,7 +296,8 @@ class PluginApi
             strtoupper($method),
             self::normalizeRoutePath($path),
             $handler,
-            !empty($opts['admin'])
+            !empty($opts['admin']),
+            !empty($opts['stream'])
         );
     }
 
@@ -324,6 +332,53 @@ class PluginApi
             'workspaces' => $this->workspaces,
             'side_tabs' => $this->sideTabs,
         ];
+    }
+
+    /**
+     * Insert a block into a tree. Does not write the database.
+     *
+     * @param list<array<string, mixed>> $tree
+     * @param array<string, mixed> $spec
+     * @return list<array<string, mixed>>
+     */
+    public function insertBlock(array $tree, array $spec): array
+    {
+        return PluginDraft::insertBlock($tree, $spec);
+    }
+
+    /**
+     * Replace one block's data. Does not write the database.
+     *
+     * @param list<array<string, mixed>> $tree
+     * @param array<string, mixed> $data
+     * @return list<array<string, mixed>>
+     */
+    public function updateBlockData(array $tree, int|string $id, array $data): array
+    {
+        return PluginDraft::updateBlockData($tree, $id, $data);
+    }
+
+    /**
+     * Merge keys into one block's data. Does not write the database.
+     *
+     * @param list<array<string, mixed>> $tree
+     * @param array<string, mixed> $partial
+     * @return list<array<string, mixed>>
+     */
+    public function patchBlockData(array $tree, int|string $id, array $partial): array
+    {
+        return PluginDraft::patchBlockData($tree, $id, $partial);
+    }
+
+    /**
+     * Remove a block and its children. Does not write the database.
+     *
+     * @param list<array<string, mixed>> $tree
+     * @return list<array<string, mixed>>
+     */
+    public function removeBlock(array $tree, int|string $id): array
+    {
+        return PluginDraft::removeBlock($tree, $id);
     }
 
     /** @return list<array<string, mixed>> */
@@ -550,12 +605,162 @@ class PluginApi
         if (!is_file($abs)) {
             throw new PluginException('File not found');
         }
+        return $this->ingestFile($abs, basename($abs));
+    }
+
+    /**
+     * Store raw file bytes in the media library.
+     *
+     * @return array<string, mixed>
+     */
+    public function importMediaBytes(string $filename, string $contents): array
+    {
+        $this->requireCapability('site.write');
+        if ($contents === '') {
+            throw new PluginException('File is empty');
+        }
+        if (strlen($contents) > 10 * 1024 * 1024) {
+            throw new PluginException('File too large (max 10 MB)');
+        }
+        $filename = basename(str_replace('\\', '/', $filename));
+        if ($filename === '' || $filename === '.' || $filename === '..') {
+            throw new PluginException('Filename is invalid');
+        }
+        $tmp = tempnam(sys_get_temp_dir(), 'sneeze-media-');
+        if ($tmp === false) {
+            throw new PluginException('Could not store media');
+        }
+        try {
+            if (file_put_contents($tmp, $contents) === false) {
+                throw new PluginException('Could not store media');
+            }
+            return $this->ingestFile($tmp, $filename);
+        } finally {
+            if (is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
+    }
+
+    /**
+     * Download an http or https URL into the media library.
+     *
+     * @return array<string, mixed>
+     */
+    public function importMediaFromUrl(string $url, ?string $filename = null): array
+    {
+        $this->requireCapability('site.write');
+        $filename = $this->mediaNameFromUrl($url, $filename);
+        $tmp = tempnam(sys_get_temp_dir(), 'sneeze-media-');
+        if ($tmp === false) {
+            throw new PluginException('Could not store media');
+        }
+        $in = null;
+        $out = null;
+        try {
+            $context = stream_context_create([
+                'http' => [
+                    'method' => 'GET',
+                    'timeout' => 15,
+                    'follow_location' => 1,
+                    'max_redirects' => 3,
+                    'header' => "User-Agent: Sneeze\r\n",
+                ],
+            ]);
+            $in = @fopen($url, 'rb', false, $context);
+            if ($in === false) {
+                throw new PluginException('Could not fetch media');
+            }
+            $meta = stream_get_meta_data($in);
+            $final = (string) ($meta['uri'] ?? $url);
+            $finalScheme = strtolower((string) (parse_url($final, PHP_URL_SCHEME) ?: ''));
+            if (!in_array($finalScheme, ['http', 'https'], true)) {
+                throw new PluginException('Media URL must be http or https');
+            }
+            $out = fopen($tmp, 'wb');
+            if ($out === false) {
+                throw new PluginException('Could not store media');
+            }
+            $size = 0;
+            $max = 10 * 1024 * 1024;
+            while (!feof($in)) {
+                $chunk = fread($in, 8192);
+                if ($chunk === false) {
+                    break;
+                }
+                $size += strlen($chunk);
+                if ($size > $max) {
+                    throw new PluginException('File too large (max 10 MB)');
+                }
+                fwrite($out, $chunk);
+            }
+            fclose($out);
+            $out = null;
+            fclose($in);
+            $in = null;
+            if ($size < 1) {
+                throw new PluginException('File is empty');
+            }
+            return $this->ingestFile($tmp, $filename);
+        } finally {
+            if (is_resource($in)) {
+                fclose($in);
+            }
+            if (is_resource($out)) {
+                fclose($out);
+            }
+            if (is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    public function saveToolchain(array $data): array
+    {
+        $this->requireCapability('site.write');
+        return ToolchainRepository::save($data);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function ingestFile(string $path, string $filename): array
+    {
         $user = Auth::user();
-        $item = (new MediaStore())->ingest($abs, basename($abs), $user ? (int) $user['id'] : 0);
+        $item = (new MediaStore())->ingest($path, $filename, $user ? (int) $user['id'] : 0);
         if ($item === null) {
             throw new PluginException('Could not import media');
         }
         return $item;
+    }
+
+    private function mediaNameFromUrl(string $url, ?string $filename): string
+    {
+        if (preg_match('/[\r\n\0]/', $url)) {
+            throw new PluginException('Media URL must be http or https');
+        }
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            throw new PluginException('Media URL must be http or https');
+        }
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        if (!in_array($scheme, ['http', 'https'], true) || empty($parts['host'])) {
+            throw new PluginException('Media URL must be http or https');
+        }
+        if (isset($parts['user']) || isset($parts['pass'])) {
+            throw new PluginException('Media URL must be http or https');
+        }
+        $name = $filename ?? '';
+        $name = basename(str_replace('\\', '/', $name));
+        if ($name === '' || $name === '.' || $name === '..') {
+            $pathName = basename((string) ($parts['path'] ?? ''));
+            $name = ($pathName !== '' && $pathName !== '.' && $pathName !== '..') ? $pathName : 'download';
+        }
+        return $name;
     }
 
     /** @return array<string, mixed> */
