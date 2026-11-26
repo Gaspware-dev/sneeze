@@ -63,6 +63,14 @@ docker compose up --build
 
 During setup, choose site folder `/var/www/html`, public URL path `/`, and asset folder `uploads`. `docker compose` bind-mounts the repo over `/var/www/html/sneeze` so code changes apply without rebuilding.
 
+### Coolify
+
+`docker-compose.coolify.yml` is that same layout for a Coolify Docker Compose application. Set **Docker Compose Location** to `/docker-compose.coolify.yml`. Coolify's proxy routes the generated domain to Apache port 80 (`SERVICE_URL_SNEEZE_80`), with no published host port.
+
+The public site is `https://<domain>/`. The studio is `https://<domain>/sneeze/`. A volume on `/var/www/html` keeps published HTML, uploads, and `sneeze/data` across redeploys; startup refreshes the `/sneeze` app files and leaves `sneeze/data` in place.
+
+Use the same setup paths: site folder `/var/www/html`, public URL path `/`, asset folder `uploads`.
+
 ## Local development
 
 PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside the `sneeze/` folder), then start the server from there:
