@@ -150,7 +150,15 @@ A JSON plugin route runs until PHP’s `max_execution_time` (often 30 seconds). 
 3. Sneeze extracts the package (including GitHub’s nested `owner-repo-sha/` folder), overlays app files, and leaves `sneeze/data/` alone (config, SQLite, uploads, backups).
 4. Downgrades are refused when the package `VERSION` is older than the installed version.
 
-Current version is shown in Settings (starts at **v2.0.0-alpha1**).
+Current version is shown in Settings (starts at **v2.0.0-alpha.1**).
+
+## Versioning
+
+The product version lives in the root `VERSION` file (no leading `v`):
+
+`MAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N]`
+
+Example: `2.0.0-alpha.1`. Git tags, Settings, and the updater show that string with a `v` prefix (`v2.0.0-alpha.1`). The stored prerelease form is dotted (`2.0.0-alpha.1`). `Version::compare` still accepts the legacy glued form, so `2.0.0-alpha1` compares equal to `2.0.0-alpha.1`. Plugin API version is separate and stays at 1.
 
 ## Publish pipeline
 
