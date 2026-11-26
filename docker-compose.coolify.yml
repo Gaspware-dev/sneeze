@@ -1,0 +1,42 @@
+# Coolify Docker Compose application for testing the drop-in layout.
+#
+# Apache's document root is the public site (/). Sneeze is the /sneeze/ subfolder.
+# Point Coolify at this file (Docker Compose Location: /docker-compose.coolify.yml).
+# Do not use docker-compose.yml here: that file bind-mounts a local checkout and
+# publishes port 8080 for laptop testing.
+#
+# SERVICE_URL_SNEEZE_80 asks Coolify's proxy for a domain routed to container port 80.
+# The path is / so https://<domain>/ is the site and https://<domain>/sneeze/ is the studio.
+# No host port is published.
+#
+# The sneeze-html volume is the whole document root, so published HTML, uploads, and
+# sneeze/data survive a redeploy. On start the image refreshes /var/www/html/sneeze
+# and leaves sneeze/data alone.
+#
+# Setup wizard:
+#   site folder:  /var/www/html
+#   web base:     /
+#   asset folder: uploads
+
+services:
+  sneeze:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      SERVICE_URL_SNEEZE_80: /
+      SNEEZE_SYNC_ON_START: "1"
+    volumes:
+      - sneeze-html:/var/www/html
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 80) ? 0 : 1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  sneeze-html:

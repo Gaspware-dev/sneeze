@@ -4,6 +4,13 @@ declare(strict_types=1);
 
 class Version
 {
+    /** Prerelease precedence. A release with no label outranks all of these. */
+    private const PRE_RANK = [
+        'alpha' => 1,
+        'beta' => 2,
+        'rc' => 3,
+    ];
+
     public static function current(): string
     {
         $path = Config::installDir() . '/VERSION';
@@ -15,7 +22,12 @@ class Version
     }
 
     /**
-     * Compare two semver-ish versions (supports -alphaN / -betaN / -rcN).
+     * Compare two product versions.
+     * Dotted prereleases (-alpha.N, -beta.N, -rc.N) are preferred.
+     * The legacy glued form (-alphaN) compares equal to the dotted form.
+     * A release with no prerelease is greater than any prerelease of the same core.
+     * An optional leading v is ignored.
+     *
      * @return int negative if $a < $b, 0 if equal, positive if $a > $b
      */
     public static function compare(string $a, string $b): int
@@ -36,8 +48,10 @@ class Version
         if ($pb['pre'] === null) {
             return -1;
         }
-        if ($pa['pre']['label'] !== $pb['pre']['label']) {
-            return $pa['pre']['label'] <=> $pb['pre']['label'];
+        $ra = self::PRE_RANK[$pa['pre']['label']] ?? 0;
+        $rb = self::PRE_RANK[$pb['pre']['label']] ?? 0;
+        if ($ra !== $rb) {
+            return $ra <=> $rb;
         }
         return $pa['pre']['num'] <=> $pb['pre']['num'];
     }
@@ -47,10 +61,16 @@ class Version
      */
     private static function parse(string $version): array
     {
-        $version = strtolower(ltrim(trim($version), 'v'));
+        $version = ltrim(strtolower(trim($version)), 'v');
         $pre = null;
         $core = $version;
-        if (preg_match('/^([0-9.]+)-([a-z]+)(\d*)$/', $version, $m)) {
+        if (preg_match('/^([0-9.]+)-(alpha|beta|rc)\.(\d+)$/', $version, $m)) {
+            $core = $m[1];
+            $pre = [
+                'label' => $m[2],
+                'num' => (int) $m[3],
+            ];
+        } elseif (preg_match('/^([0-9.]+)-(alpha|beta|rc)(\d*)$/', $version, $m)) {
             $core = $m[1];
             $pre = [
                 'label' => $m[2],

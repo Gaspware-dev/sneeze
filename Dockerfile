@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libjpeg62-turbo-dev \
         libfreetype6-dev \
         libzip-dev \
+        rsync \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" pdo_sqlite gd zip \
     && a2enmod rewrite headers \
@@ -25,7 +26,11 @@ RUN printf '%s\n' \
     > /etc/apache2/conf-available/sneeze.conf \
     && a2enconf sneeze
 
-# Copy the Git repository contents into the /sneeze subfolder
+# Immutable app tree. Coolify mounts a volume over /var/www/html, which hides
+# the copy below; the entrypoint refreshes /sneeze from this path and keeps data/.
+COPY . /opt/sneeze-src/
+
+# Public site is /var/www/html (/). Studio lives in the /sneeze subfolder.
 COPY . /var/www/html/sneeze/
 
 # Writable site root (published HTML) and studio data dirs

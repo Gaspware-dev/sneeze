@@ -98,6 +98,12 @@ expect('asset folder rejects traversal', Config::sanitizeUploadDir('../etc', fal
 expect('version compare equal', Version::compare('2.0.0-alpha1', '2.0.0-alpha1'), 0);
 expect('version compare alpha order', Version::compare('2.0.0-alpha1', '2.0.0-alpha2') < 0, true);
 expect('version compare release after alpha', Version::compare('2.0.0', '2.0.0-alpha1') > 0, true);
+expect('version alpha.1 < alpha.2', Version::compare('2.0.0-alpha.1', '2.0.0-alpha.2') < 0, true);
+expect('version alpha.2 < beta.1', Version::compare('2.0.0-alpha.2', '2.0.0-beta.1') < 0, true);
+expect('version beta.1 < rc.1', Version::compare('2.0.0-beta.1', '2.0.0-rc.1') < 0, true);
+expect('version rc.1 < release', Version::compare('2.0.0-rc.1', '2.0.0') < 0, true);
+expect('version leading v equals', Version::compare('v2.0.0-alpha.1', '2.0.0-alpha.1'), 0);
+expect('version legacy glued equals dotted', Version::compare('2.0.0-alpha1', '2.0.0-alpha.1'), 0);
 
 $doc = <<<'HTML'
 <!DOCTYPE html>
@@ -131,6 +137,9 @@ expectContains('import css extracted', $parsed['css'], 'color: red');
 $frag = (new HtmlImporter())->parse('<section class="hero">Fragment</section>');
 expect('fragment not document', $frag['is_document'], false);
 expectContains('fragment body', $frag['content'], 'Fragment');
+
+Config::init(dirname(__DIR__));
+expect('version current tree', Version::current(), '2.0.0-alpha.1');
 
 file_put_contents($installDir . '/VERSION', "2.0.0-alpha1\n");
 file_put_contents($installDir . '/index.php', "<?php\n// sneeze stub\n");

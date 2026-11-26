@@ -63,6 +63,14 @@ docker compose up --build
 
 During setup, choose site folder `/var/www/html`, public URL path `/`, and asset folder `uploads`. `docker compose` bind-mounts the repo over `/var/www/html/sneeze` so code changes apply without rebuilding.
 
+### Coolify
+
+`docker-compose.coolify.yml` is that same layout for a Coolify Docker Compose application. Set **Docker Compose Location** to `/docker-compose.coolify.yml`. Coolify's proxy routes the generated domain to Apache port 80 (`SERVICE_URL_SNEEZE_80`), with no published host port.
+
+The public site is `https://<domain>/`. The studio is `https://<domain>/sneeze/`. A volume on `/var/www/html` keeps published HTML, uploads, and `sneeze/data` across redeploys; startup refreshes the `/sneeze` app files and leaves `sneeze/data` in place.
+
+Use the same setup paths: site folder `/var/www/html`, public URL path `/`, asset folder `uploads`.
+
 ## Local development
 
 PHP's built-in server does not read `.htaccess`. Save a `router.php` file in your site root (alongside the `sneeze/` folder), then start the server from there:
@@ -150,7 +158,15 @@ A JSON plugin route runs until PHP’s `max_execution_time` (often 30 seconds). 
 3. Sneeze extracts the package (including GitHub’s nested `owner-repo-sha/` folder), overlays app files, and leaves `sneeze/data/` alone (config, SQLite, uploads, backups).
 4. Downgrades are refused when the package `VERSION` is older than the installed version.
 
-Current version is shown in Settings (starts at **v2.0.0-alpha1**).
+Current version is shown in Settings (starts at **v2.0.0-alpha.1**).
+
+## Versioning
+
+The product version lives in the root `VERSION` file (no leading `v`):
+
+`MAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N]`
+
+Example: `2.0.0-alpha.1`. Git tags, Settings, and the updater show that string with a `v` prefix (`v2.0.0-alpha.1`). The stored prerelease form is dotted (`2.0.0-alpha.1`). `Version::compare` still accepts the legacy glued form, so `2.0.0-alpha1` compares equal to `2.0.0-alpha.1`. Plugin API version is separate and stays at 1.
 
 ## Publish pipeline
 

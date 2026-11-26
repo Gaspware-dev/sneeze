@@ -11,4 +11,5 @@ config.json
 tests
 Dockerfile
 docker-compose.yml
+docker-compose.coolify.yml
 .dockerignore
