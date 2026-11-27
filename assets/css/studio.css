@@ -447,6 +447,42 @@ body.studio-app {
   height: calc(100vh - 170px);
 }
 
+.is-editor-source {
+  display: none;
+}
+
+.codemirror-wrap--compact .CodeMirror {
+  height: 16rem;
+  min-height: 8rem;
+}
+
+#tab-code .code-fallback {
+  width: 100%;
+  min-height: calc(100vh - 170px);
+}
+
+.quill-field .ql-toolbar.ql-snow,
+.quill-field .ql-container.ql-snow {
+  border-color: var(--color-border);
+  font-family: var(--font-body);
+}
+
+.quill-field .ql-toolbar.ql-snow {
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--color-white);
+}
+
+.quill-field .ql-container.ql-snow {
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--color-white);
+  font-size: 0.9375rem;
+  min-height: 8rem;
+}
+
+.quill-field .ql-editor {
+  min-height: 8rem;
+}
+
 .image-field {
   display: flex;
   gap: 0.35rem;

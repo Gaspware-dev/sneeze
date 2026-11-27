@@ -510,6 +510,9 @@ class Api
             if (isset($body['site_title'])) {
                 Config::set('site_title', $body['site_title']);
             }
+            if (array_key_exists('visual_editors', $body)) {
+                Config::set('visual_editors', (bool) $body['visual_editors']);
+            }
             Config::save();
             $settings = Config::all();
             $settings['version'] = Version::current();
@@ -533,6 +536,7 @@ class Api
             'site_web_base' => Config::siteWebBase(),
             'upload_dir' => Config::uploadDir(),
             'draft_upload_dir' => 'sneeze/data/uploads',
+            'visual_editors' => Config::get('visual_editors', true) !== false,
             'version' => Version::current(),
         ];
     }

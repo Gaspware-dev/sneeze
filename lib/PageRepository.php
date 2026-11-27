@@ -391,8 +391,10 @@ class PageRepository
             }
             $value = $data[$name] ?? '';
             $kind = $field['type'] ?? 'text';
-            if ($kind === 'richtext' || $kind === 'code') {
-                $allowed[$name] = $kind === 'richtext' ? (new Sanitizer())->clean((string) $value) : (string) $value;
+            if ($kind === 'richtext' || $kind === 'textarea' || $kind === 'code') {
+                $allowed[$name] = ($kind === 'richtext' || $kind === 'textarea')
+                    ? (new Sanitizer())->clean((string) $value)
+                    : (string) $value;
             } elseif ($kind === 'number') {
                 $allowed[$name] = is_numeric($value) ? (0 + $value) : 0;
             } else {

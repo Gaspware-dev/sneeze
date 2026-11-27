@@ -145,6 +145,14 @@ file_put_contents($installDir . '/VERSION', "2.0.0-alpha1\n");
 file_put_contents($installDir . '/index.php', "<?php\n// sneeze stub\n");
 Config::init($installDir);
 expect('version current', Version::current(), '2.0.0-alpha1');
+expect('visual editors default on', Config::get('visual_editors'), true);
+$dataDir = Config::dataDir();
+if (!is_dir($dataDir)) {
+    mkdir($dataDir, 0750, true);
+}
+file_put_contents($dataDir . '/config.json', json_encode(['setup_complete' => false]));
+Config::init($installDir);
+expect('visual editors missing key stays on', Config::get('visual_editors'), true);
 Database::connect(Config::dataDir());
 
 $home = PageRepository::all()[0] ?? null;
@@ -169,6 +177,65 @@ expect('no empty class', str_contains($html, 'class=""'), false);
 expect('no unused js tag', str_contains($html, '<script'), false);
 expect('no css comments', str_contains($html, '/* Theme'), false);
 expectContains('quote figure', $html, '<figure class="quote wrap">');
+expectContains('seeded quote html', $html, 'The live site is just files.');
+$quoteType = null;
+foreach (BlockTypeRepository::all() as $type) {
+    if (($type['slug'] ?? '') === 'quote') {
+        $quoteType = $type;
+        break;
+    }
+}
+expect('quote type seeded', $quoteType !== null, true);
+$quoted = (new Compiler())->compilePage((int) $home['id'], false, [
+    'blocks' => [[
+        'block_type_id' => (int) $quoteType['id'],
+        'block_type' => [
+            'id' => (int) $quoteType['id'],
+            'slug' => 'quote',
+            'html' => '<figure class="quote wrap"><blockquote>{{quote}}</blockquote></figure>',
+            'schema' => $quoteType['schema'],
+            'css' => '',
+            'js' => '',
+        ],
+        'slot' => 'content',
+        'data' => ['quote' => '<p>Keep <em>this</em></p>', 'cite' => ''],
+        'children' => [],
+    ]],
+]);
+expectContains('textarea html published', $quoted, '<em>this</em>');
+expect('textarea html not escaped', str_contains($quoted, '&lt;em&gt;'), false);
+
+$withQuote = function (array $nodes, string $value) use (&$withQuote): array {
+    foreach ($nodes as $i => $node) {
+        if (($node['block_type']['slug'] ?? '') === 'quote') {
+            $node['data']['quote'] = $value;
+        }
+        if (is_array($node['children'] ?? null) && $node['children'] !== []) {
+            $node['children'] = $withQuote($node['children'], $value);
+        }
+        $nodes[$i] = $node;
+    }
+    return $nodes;
+};
+$stored = PageRepository::get((int) $home['id']);
+PageRepository::update((int) $home['id'], [
+    'blocks' => $withQuote($stored['blocks'], '<p>Keep <em>this</em></p><script>nope</script>'),
+]);
+$savedQuote = '';
+$findQuote = function (array $nodes) use (&$findQuote, &$savedQuote): void {
+    foreach ($nodes as $node) {
+        if (($node['block_type']['slug'] ?? '') === 'quote') {
+            $savedQuote = (string) ($node['data']['quote'] ?? '');
+        }
+        if (is_array($node['children'] ?? null)) {
+            $findQuote($node['children']);
+        }
+    }
+};
+$findQuote(PageRepository::get((int) $home['id'])['blocks']);
+expect('textarea script stripped', str_contains($savedQuote, '<script'), false);
+expectContains('textarea emphasis kept', $savedQuote, '<em>this</em>');
+PageRepository::update((int) $home['id'], ['blocks' => $stored['blocks']]);
 expect('markers replaced', str_contains($html, 'sneeze:header'), false);
 if (str_contains($html, 'sneeze-block')) {
     $failed++;

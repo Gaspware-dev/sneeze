@@ -437,10 +437,7 @@ class Compiler
         $data = $this->prepareData($type, $data, $preview);
         $data['_slots'] = $slots;
 
-        $templateHtml = (string) ($type['html'] ?? '');
-        if ($preview) {
-            $templateHtml = $this->previewEditableTemplate($templateHtml, $type);
-        }
+        $templateHtml = $this->promoteHtmlFields((string) ($type['html'] ?? ''), $type, $preview);
         $inner = $this->interpolator->render($templateHtml, $data);
         $filteredInner = PluginHooks::filter(PluginHooks::BLOCK_HTML, $inner, [
             'preview' => $preview,
@@ -505,7 +502,7 @@ class Compiler
                 continue;
             }
             $raw = (string) ($data[$name] ?? '');
-            if ($kind === 'richtext') {
+            if ($kind === 'richtext' || $kind === 'textarea') {
                 $data[$name] = '<div class="sneeze-editable sneeze-editable--rich" contenteditable="true" data-sneeze-field="'
                     . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '" data-sneeze-rich="1">' . $raw . '</div>';
             } else {
@@ -517,7 +514,12 @@ class Compiler
         return $data;
     }
 
-    private function previewEditableTemplate(string $html, array $type): string
+    /**
+     * Textarea fields store HTML, so publish and preview print them raw.
+     * Preview also prints plain text fields raw so the editable wrapper is not escaped.
+     * An existing triple-brace tag is left unchanged.
+     */
+    private function promoteHtmlFields(string $html, array $type, bool $preview): string
     {
         foreach ($type['schema']['fields'] ?? [] as $field) {
             if (!is_array($field)) {
@@ -525,17 +527,17 @@ class Compiler
             }
             $name = (string) ($field['name'] ?? '');
             $kind = (string) ($field['type'] ?? 'text');
-            if ($name === '' || !in_array($kind, ['text', 'textarea'], true)) {
+            if ($name === '') {
                 continue;
             }
             if (($type['slug'] ?? '') === 'heading' && $name === 'text') {
                 continue;
             }
-            $html = preg_replace(
-                '/\{\{\s*' . preg_quote($name, '/') . '\s*\}\}/',
-                '{{{' . $name . '}}}',
-                $html
-            ) ?? $html;
+            if ($kind !== 'textarea' && !($preview && $kind === 'text')) {
+                continue;
+            }
+            $pattern = '/(?<!\{)\{\{\s*' . preg_quote($name, '/') . '\s*\}\}(?!\})/';
+            $html = preg_replace($pattern, '{{{' . $name . '}}}', $html) ?? $html;
         }
         return $html;
     }
