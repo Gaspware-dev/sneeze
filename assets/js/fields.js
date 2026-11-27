@@ -1,3 +1,5 @@
+import { bindCodeTextarea, codeMode, createQuillEditor } from './editors.js';
+
 export function defaultData(schema) {
   const data = {};
   for (const field of schema?.fields || []) {
@@ -26,14 +28,17 @@ export function renderFields(container, schema, data, onChange, helpers) {
     const value = data[field.name] ?? '';
     const type = field.type || 'text';
 
-    if (type === 'textarea') {
-      const el = document.createElement('textarea');
-      el.rows = 4;
-      el.value = value;
-      el.addEventListener('input', () => onChange(field.name, el.value));
-      wrap.appendChild(el);
-    } else if (type === 'richtext') {
-      wrap.appendChild(richText(value, (html) => onChange(field.name, html), helpers));
+    if (type === 'textarea' || type === 'richtext') {
+      const quill = createQuillEditor(value, (html) => onChange(field.name, html), helpers?.pickMedia);
+      if (quill) {
+        wrap.appendChild(quill);
+      } else {
+        const el = document.createElement('textarea');
+        el.rows = type === 'richtext' ? 8 : 4;
+        el.value = value;
+        el.addEventListener('input', () => onChange(field.name, el.value));
+        wrap.appendChild(el);
+      }
     } else if (type === 'select') {
       const el = document.createElement('select');
       for (const opt of field.options || []) {
@@ -73,10 +78,12 @@ export function renderFields(container, schema, data, onChange, helpers) {
     } else if (type === 'code') {
       const el = document.createElement('textarea');
       el.rows = 10;
+      el.className = 'code-textarea';
+      el.spellcheck = false;
       el.value = value;
-      el.style.fontFamily = 'ui-monospace, monospace';
       el.addEventListener('input', () => onChange(field.name, el.value));
       wrap.appendChild(el);
+      bindCodeTextarea(el, codeMode(field.mode));
     } else {
       const el = document.createElement('input');
       el.type = type === 'url' ? 'url' : 'text';
@@ -87,46 +94,6 @@ export function renderFields(container, schema, data, onChange, helpers) {
 
     container.appendChild(wrap);
   }
-}
-
-function richText(html, onChange, helpers) {
-  const box = document.createElement('div');
-  const bar = document.createElement('div');
-  bar.className = 'rich-toolbar';
-  const cmds = [
-    ['bold', 'B'],
-    ['italic', 'I'],
-    ['createLink', 'Link'],
-    ['insertImage', 'Image'],
-  ];
-  const canvas = document.createElement('div');
-  canvas.className = 'rich-canvas';
-  canvas.contentEditable = 'true';
-  canvas.innerHTML = html || '';
-  canvas.addEventListener('input', () => onChange(canvas.innerHTML));
-
-  for (const [cmd, label] of cmds) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn--ghost btn--sm';
-    btn.innerHTML = label;
-    btn.addEventListener('click', () => {
-      if (cmd === 'createLink') {
-        const url = prompt('URL:');
-        if (url) document.execCommand('createLink', false, url);
-      } else if (cmd === 'insertImage') {
-        helpers.pickMedia((url) => document.execCommand('insertImage', false, url));
-      } else {
-        document.execCommand(cmd, false, null);
-      }
-      onChange(canvas.innerHTML);
-    });
-    bar.appendChild(btn);
-  }
-
-  box.appendChild(bar);
-  box.appendChild(canvas);
-  return box;
 }
 
 export function unflattenTokens(flat) {

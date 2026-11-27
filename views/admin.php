@@ -16,6 +16,7 @@ $user = Auth::user();
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/admin.css">
   <link rel="stylesheet" href="<?= htmlspecialchars($assetBase) ?>/css/studio.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/quill/2.0.2/quill.snow.css">
 </head>
 <body class="studio-app">
   <header class="studio-top">
@@ -335,6 +336,11 @@ $user = Auth::user();
           <label for="settings-title">Admin / site title</label>
           <input type="text" id="settings-title">
         </div>
+        <label class="toolchain-check" for="settings-visual-editors">
+          <input type="checkbox" id="settings-visual-editors" checked>
+          Visual editors
+        </label>
+        <p class="muted">Quill for rich text and multi-line prose. CodeMirror for HTML, CSS, and JavaScript. Turn off to use plain text boxes.</p>
         <div class="contact-form__actions">
           <button type="submit" class="btn btn--primary">Save settings</button>
           <button type="button" class="btn btn--ghost" id="btn-publish-all">Publish all pages</button>
@@ -425,6 +431,7 @@ $user = Auth::user();
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/2.0.2/quill.js"></script>
   <script type="module" src="<?= htmlspecialchars($assetBase) ?>/js/admin.js"></script>
 </body>
 </html>

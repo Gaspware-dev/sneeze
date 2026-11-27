@@ -74,7 +74,7 @@ class Seed
 
         self::insertBlock($pdo, $homeId, $types['hero'], null, 'content', 0, [
             'title' => 'Design in the studio. Publish a file.',
-            'subtitle' => 'Sneeze stores templates, blocks, CSS and JS in a database, then merges them into a single HTML file when you publish.',
+            'subtitle' => '<p>Sneeze stores templates, blocks, CSS and JS in a database, then merges them into a single HTML file when you publish.</p>',
             'button_label' => 'Read the idea',
             'button_url' => 'about.html',
             'image' => '',
@@ -91,13 +91,13 @@ class Seed
         ]);
 
         self::insertBlock($pdo, $homeId, $types['quote'], null, 'content', 2, [
-            'quote' => 'The live site is just files. The studio is where the site is designed.',
+            'quote' => '<p>The live site is just files. The studio is where the site is designed.</p>',
             'cite' => 'Sneeze',
         ]);
 
         self::insertBlock($pdo, $homeId, $types['cta'], null, 'content', 3, [
             'heading' => 'Ready when you are',
-            'text' => 'Save drafts as you work. Publish writes index.html into your site folder.',
+            'text' => '<p>Save drafts as you work. Publish writes index.html into your site folder.</p>',
             'button_label' => 'Open about',
             'button_url' => 'about.html',
         ]);
@@ -331,7 +331,7 @@ HTML;
   {{#if image}}<div class="hero__media"><img src="{{image}}" alt="" decoding="async"></div>{{/if}}
   <div class="hero__inner wrap">
     <h1>{{title}}</h1>
-    {{#if subtitle}}<p class="lede">{{subtitle}}</p>{{/if}}
+    {{#if subtitle}}<div class="lede">{{{subtitle}}}</div>{{/if}}
     {{#if button_label}}<a class="btn" href="{{button_url}}">{{button_label}}</a>{{/if}}
   </div>
 </section>
@@ -440,7 +440,7 @@ CSS,
                 'html' => <<<'HTML'
 <figure class="quote wrap">
   <blockquote>
-    <p>{{quote}}</p>
+    {{{quote}}}
   </blockquote>
   {{#if cite}}<figcaption>{{cite}}</figcaption>{{/if}}
 </figure>
@@ -470,7 +470,7 @@ CSS,
 <section class="cta">
   <div class="wrap cta__inner">
     <h2>{{heading}}</h2>
-    {{#if text}}<p>{{text}}</p>{{/if}}
+    {{#if text}}{{{text}}}{{/if}}
     {{#if button_label}}<a class="btn" href="{{button_url}}">{{button_label}}</a>{{/if}}
   </div>
 </section>

@@ -48,6 +48,7 @@ class Config
             'upload_dir' => 'uploads',
             'backup_retention' => 20,
             'site_title' => 'Sneeze Admin',
+            'visual_editors' => true,
         ];
     }
 

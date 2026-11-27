@@ -1,6 +1,13 @@
 import { api, setCsrf, showStatus, hideStatus, apiUrl } from './api.js';
 import { defaultData, renderFields, flattenTokens, unflattenTokens } from './fields.js';
 import { emitStudio, mountPlugins } from './plugins.js';
+import {
+  bindCodeTextarea,
+  refreshCodeEditor,
+  setCodeValue,
+  setVisualEditors,
+  visualEditorsEnabled,
+} from './editors.js';
 
 const state = {
   user: null,
@@ -105,6 +112,8 @@ async function init() {
       const ver = document.getElementById('settings-version');
       if (ver) ver.textContent = `Sneeze v${data.config.version}`;
     }
+    setVisualEditors(data.config?.visual_editors !== false);
+    bindPageCodeEditors();
     if (isAdmin()) {
       document.querySelectorAll('.admin-only').forEach((el) => el.classList.remove('hidden'));
     }
@@ -223,8 +232,8 @@ function syncDraftForm() {
   document.getElementById('page-seo').value = state.page.seo_description || '';
   document.getElementById('page-header-mode').value = state.page.header_mode || 'inherit';
   document.getElementById('page-footer-mode').value = state.page.footer_mode || 'inherit';
-  document.getElementById('page-header-html').value = state.page.header_html || '';
-  document.getElementById('page-footer-html').value = state.page.footer_html || '';
+  setCodeValue(document.getElementById('page-header-html'), state.page.header_html || '');
+  setCodeValue(document.getElementById('page-footer-html'), state.page.footer_html || '');
   syncChromeModeUi();
 }
 
@@ -370,7 +379,11 @@ function bindStudio() {
     document.querySelectorAll('.side-tab').forEach((tab) => {
       tab.classList.toggle('is-active', tab.id === `tab-${btn.dataset.tab}`);
     });
-    if (btn.dataset.tab === 'write') renderWrite();
+    if (btn.dataset.tab === 'write') {
+      renderWrite();
+      refreshCodeEditor(document.getElementById('page-header-html'));
+      refreshCodeEditor(document.getElementById('page-footer-html'));
+    }
     if (btn.dataset.tab === 'code') {
       renderCode();
       setTimeout(() => state.codeEditor?.refresh(), 40);
@@ -436,6 +449,8 @@ function syncChromeModeUi() {
   const footerMode = document.getElementById('page-footer-mode')?.value || 'inherit';
   document.getElementById('page-header-wrap')?.classList.toggle('hidden', headerMode !== 'custom');
   document.getElementById('page-footer-wrap')?.classList.toggle('hidden', footerMode !== 'custom');
+  refreshCodeEditor(document.getElementById('page-header-html'));
+  refreshCodeEditor(document.getElementById('page-footer-html'));
 }
 
 function renderPageAssetExcludes() {
@@ -535,8 +550,8 @@ async function openPage(id) {
   state.page.disabled_script_ids = state.page.disabled_script_ids || [];
   document.getElementById('page-header-mode').value = state.page.header_mode;
   document.getElementById('page-footer-mode').value = state.page.footer_mode;
-  document.getElementById('page-header-html').value = state.page.header_html;
-  document.getElementById('page-footer-html').value = state.page.footer_html;
+  setCodeValue(document.getElementById('page-header-html'), state.page.header_html);
+  setCodeValue(document.getElementById('page-footer-html'), state.page.footer_html);
   syncChromeModeUi();
   renderPageAssetExcludes();
   const live = document.getElementById('btn-live');
@@ -844,19 +859,37 @@ function renderCode() {
       ? { name: 'javascript', typescript: true }
       : 'htmlmixed';
   const value = codeValue(target);
-  if (!state.codeEditor) {
+  if (!visualEditorsEnabled() || typeof window.CodeMirror !== 'function') {
+    state.codeEditor = null;
+    wrap.innerHTML = '';
+    const area = document.createElement('textarea');
+    area.className = 'code-textarea code-fallback';
+    area.rows = 24;
+    area.spellcheck = false;
+    area.value = value;
+    area.addEventListener('input', () => {
+      applyCodeValue(document.getElementById('code-target').value, area.value);
+    });
+    wrap.appendChild(area);
+    return;
+  }
+  if (!state.codeEditor || !wrap.querySelector('.CodeMirror')) {
+    wrap.innerHTML = '';
     state.codeEditor = window.CodeMirror(wrap, {
       value,
       mode,
       lineNumbers: true,
       lineWrapping: true,
     });
-    state.codeEditor.on('change', () => {
-      applyCodeValue(document.getElementById('code-target').value, state.codeEditor.getValue());
+    state.codeEditor.on('change', (instance, change) => {
+      if (change.origin === 'setValue') return;
+      applyCodeValue(document.getElementById('code-target').value, instance.getValue());
     });
   } else {
     state.codeEditor.setOption('mode', mode);
-    state.codeEditor.setValue(value);
+    if (state.codeEditor.getValue() !== value) {
+      state.codeEditor.setValue(value);
+    }
   }
   setTimeout(() => state.codeEditor.refresh(), 30);
 }
@@ -1145,6 +1178,7 @@ function renderLibrary(selected = null, kind = null) {
   }
   title.textContent = selected.name;
   form.innerHTML = libraryForm(selected, kind);
+  mountLibraryCode(form);
   form.querySelector('form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -1161,6 +1195,12 @@ function renderLibrary(selected = null, kind = null) {
     } catch (err) {
       showStatus(toast, err.message, true);
     }
+  });
+}
+
+function mountLibraryCode(form) {
+  form.querySelectorAll('textarea[name="html"], textarea[name="css"], textarea[name="js"]').forEach((el) => {
+    bindCodeTextarea(el, el.name);
   });
 }
 
@@ -1228,8 +1268,10 @@ async function loadDesign() {
   const chrome = state.design.chrome || { header_html: '', footer_html: '' };
   const headerEl = document.getElementById('chrome-header');
   const footerEl = document.getElementById('chrome-footer');
-  if (headerEl) headerEl.value = chrome.header_html || '';
-  if (footerEl) footerEl.value = chrome.footer_html || '';
+  setCodeValue(headerEl, chrome.header_html || '');
+  setCodeValue(footerEl, chrome.footer_html || '');
+  bindCodeTextarea(headerEl, 'html');
+  bindCodeTextarea(footerEl, 'html');
 
   renderAssetEditors('stylesheet-list', state.design.stylesheets, 'css', 'stylesheet');
   renderAssetEditors('script-list', state.design.scripts, 'js', 'script');
@@ -1274,12 +1316,13 @@ function renderAssetEditors(containerId, items, field, kind) {
       : '';
     wrap.innerHTML = `<label>${escapeHtml(item.name)}</label>
       <input type="text" data-name value="${escapeAttr(item.name || '')}" style="margin-bottom:0.5rem">
-      <textarea rows="12">${escapeHtml(item[field] || '')}</textarea>
+      <textarea class="code-textarea" rows="12" spellcheck="false">${escapeHtml(item[field] || '')}</textarea>
       ${placement}
       <div class="contact-form__actions">
         <button type="button" class="btn btn--primary btn--sm" data-save>Save</button>
         <button type="button" class="btn btn--ghost btn--sm" data-delete>Delete</button>
       </div>`;
+    bindCodeTextarea(wrap.querySelector('textarea'), kind === 'stylesheet' ? 'css' : 'js');
     wrap.querySelector('[data-save]').addEventListener('click', async () => {
       const value = wrap.querySelector('textarea').value;
       const name = wrap.querySelector('[data-name]').value.trim() || item.name;
@@ -1310,6 +1353,7 @@ function renderAssetEditors(containerId, items, field, kind) {
       }
     });
     el.appendChild(wrap);
+    refreshCodeEditor(wrap.querySelector('textarea'));
   });
 }
 
@@ -1744,8 +1788,11 @@ function bindSettings() {
           backup_retention: Number(document.getElementById('settings-retention').value),
           site_title: document.getElementById('settings-title').value,
           site_root: document.getElementById('settings-site-root').value,
+          visual_editors: document.getElementById('settings-visual-editors').checked,
         }),
       });
+      setVisualEditors(document.getElementById('settings-visual-editors').checked);
+      remountVisualEditors();
       if (data.settings?.version) {
         document.getElementById('settings-version').textContent = `Sneeze v${data.settings.version}`;
       }
@@ -1831,7 +1878,27 @@ async function loadSettings() {
   document.getElementById('settings-upload-dir').value = s.upload_dir || 'uploads';
   document.getElementById('settings-retention').value = s.backup_retention || 20;
   document.getElementById('settings-title').value = s.site_title || '';
+  document.getElementById('settings-visual-editors').checked = s.visual_editors !== false;
   document.getElementById('settings-version').textContent = `Sneeze v${s.version || '0.0.0'}`;
+}
+
+function bindPageCodeEditors() {
+  bindCodeTextarea(document.getElementById('page-header-html'), 'html');
+  bindCodeTextarea(document.getElementById('page-footer-html'), 'html');
+}
+
+function remountVisualEditors() {
+  bindPageCodeEditors();
+  bindCodeTextarea(document.getElementById('chrome-header'), 'html');
+  bindCodeTextarea(document.getElementById('chrome-footer'), 'html');
+  const library = document.getElementById('library-form');
+  if (library) mountLibraryCode(library);
+  document.querySelectorAll('#stylesheet-list textarea, #script-list textarea').forEach((el) => {
+    const mode = el.closest('#stylesheet-list') ? 'css' : 'js';
+    bindCodeTextarea(el, mode);
+  });
+  renderWrite();
+  renderCode();
 }
 
 function applyLocalTypes(nodes) {
