@@ -107,7 +107,7 @@ class Seed
             'level' => 'h1',
         ]);
         self::insertBlock($pdo, $aboutId, $types['richtext'], null, 'content', 1, [
-            'body' => '<p>Copy the Sneeze folder into an existing site. Design in the admin. When you publish, Sneeze merges templates, blocks, CSS and JavaScript into ordinary HTML at your site root.</p><p>Headless CMS content is fetched from the admin and cached. Page views never call the CMS — they only receive the last published file.</p>',
+            'body' => '<p>Copy the Sneeze folder into an existing site. Design in the admin. When you publish, Sneeze merges templates, blocks, CSS and JavaScript into ordinary HTML at your site root.</p><p>Visitors only receive the last published file. Nothing is compiled when someone opens the page.</p>',
         ]);
         self::insertBlock($pdo, $aboutId, $types['html'], null, 'content', 2, [
             'html' => '<div class="wrap"><p class="lede">This block is raw HTML. Edit it in the Code tab.</p></div>',
@@ -267,189 +267,10 @@ CSS;
       {{#each pages}}
       <a href="{{url}}"{{#if current}} class="is-current" aria-current="page"{{/if}}>{{title}}</a>
       {{/each}}
-      <a href="posts/index.html">Posts</a>
     </nav>
   </div>
 </header>
 HTML;
-    }
-
-    public static function ensureCmsBlocks(PDO $pdo): void
-    {
-        foreach (self::cmsBlockTypes() as $type) {
-            $stmt = $pdo->prepare('SELECT id FROM block_types WHERE slug = ?');
-            $stmt->execute([$type['slug']]);
-            if ($stmt->fetch()) {
-                continue;
-            }
-            $now = date('Y-m-d H:i:s');
-            $pdo->prepare(
-                'INSERT INTO block_types (name, slug, category, icon, schema_json, html, css, js, is_system, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)'
-            )->execute([
-                $type['name'],
-                $type['slug'],
-                $type['category'],
-                $type['icon'],
-                Json::encode($type['schema']),
-                $type['html'],
-                $type['css'],
-                $type['js'] ?? '',
-                $now,
-                $now,
-            ]);
-        }
-    }
-
-    public static function ensurePostTemplate(PDO $pdo): void
-    {
-        $stmt = $pdo->prepare('SELECT id FROM templates WHERE slug = ?');
-        $stmt->execute(['post']);
-        if ($stmt->fetch()) {
-            return;
-        }
-        $now = date('Y-m-d H:i:s');
-        $pdo->prepare(
-            'INSERT INTO templates (name, slug, html, css, js, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        )->execute([
-            'Post',
-            'post',
-            self::postTemplate(),
-            self::postTemplateCss(),
-            '',
-            $now,
-            $now,
-        ]);
-    }
-
-    public static function postTemplate(): string
-    {
-        return <<<'HTML'
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{page.seo_title}}</title>
-  <meta name="description" content="{{page.seo_description}}">
-  <meta name="robots" content="{{page.robots}}">
-  <link rel="canonical" href="{{page.canonical}}">
-  <meta property="og:type" content="article">
-  <meta property="og:title" content="{{page.seo_title}}">
-  <meta property="og:description" content="{{page.seo_description}}">
-  <meta property="og:url" content="{{page.canonical}}">
-  {{#if page.og_image}}<meta property="og:image" content="{{page.og_image}}">{{/if}}
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{page.seo_title}}">
-  <meta name="twitter:description" content="{{page.seo_description}}">
-  {{#if page.og_image}}<meta name="twitter:image" content="{{page.og_image}}">{{/if}}
-  <link rel="alternate" type="application/rss+xml" title="{{site.title}} posts" href="{{site.feed_url}}">
-  <script type="application/ld+json">{{{page.json_ld}}}</script>
-  <!-- sneeze:css -->
-</head>
-<body>
-  <!-- sneeze:header -->
-  <main class="site-main">
-    {{slot:content}}
-  </main>
-  <!-- sneeze:footer -->
-  <!-- sneeze:js -->
-</body>
-</html>
-HTML;
-    }
-
-    public static function postTemplateCss(): string
-    {
-        return <<<'CSS'
-.post-article { padding: 2.5rem 0 3.5rem; }
-.post-article__header { max-width: 42rem; margin: 0 auto 1.75rem; }
-.post-article__meta { color: var(--color-muted); font-size: .92rem; margin: .75rem 0 0; }
-.post-article__hero { margin: 0 0 1.75rem; border-radius: var(--radius-md); overflow: hidden; }
-.post-article__hero img { width: 100%; display: block; }
-.post-article__body { max-width: 42rem; margin: 0 auto; }
-.post-article__tax { max-width: 42rem; margin: 2rem auto 0; color: var(--color-muted); font-size: .9rem; }
-.post-list { padding: 2.5rem 0 3.5rem; }
-.post-list__item { padding: 1.25rem 0; border-bottom: 1px solid var(--color-border); }
-.post-list__item h2 { margin: 0 0 .35rem; font-size: 1.35rem; }
-.post-list__item p { margin: 0; color: var(--color-muted); }
-CSS;
-    }
-
-    public static function cmsBlockTypes(): array
-    {
-        return [
-            [
-                'name' => 'CMS entry',
-                'slug' => 'cms_entry',
-                'category' => 'cms',
-                'icon' => '◎',
-                'schema' => [
-                    'fields' => [
-                        ['name' => 'title', 'label' => 'Title', 'type' => 'text'],
-                        ['name' => 'excerpt', 'label' => 'Excerpt', 'type' => 'textarea'],
-                        ['name' => 'body', 'label' => 'Body HTML', 'type' => 'richtext'],
-                        ['name' => 'image', 'label' => 'Image', 'type' => 'image'],
-                        ['name' => 'url', 'label' => 'URL', 'type' => 'url'],
-                        ['name' => 'author_name', 'label' => 'Author', 'type' => 'text'],
-                    ],
-                    'slots' => [],
-                ],
-                'html' => <<<'HTML'
-<article class="cms-entry wrap">
-  {{#if image}}<div class="cms-entry__media"><img src="{{image}}" alt="" loading="lazy" decoding="async"></div>{{/if}}
-  <h2>{{title}}</h2>
-  {{#if author_name}}<p class="cms-entry__meta">{{author_name}}</p>{{/if}}
-  {{#if excerpt}}<p class="lede">{{excerpt}}</p>{{/if}}
-  <div class="prose">{{{body}}}</div>
-  {{#if url}}<p><a class="btn" href="{{url}}">Read more</a></p>{{/if}}
-</article>
-HTML,
-                'css' => <<<'CSS'
-.cms-entry { padding: 2rem 0; }
-.cms-entry__media { margin-bottom: 1rem; }
-.cms-entry__media img { border-radius: var(--radius-md); width: 100%; }
-.cms-entry__meta { color: var(--color-muted); font-size: .9rem; }
-CSS,
-            ],
-            [
-                'name' => 'CMS list',
-                'slug' => 'cms_list',
-                'category' => 'cms',
-                'icon' => '☰',
-                'schema' => [
-                    'fields' => [
-                        ['name' => 'heading', 'label' => 'Heading', 'type' => 'text'],
-                        ['name' => 'limit', 'label' => 'Limit', 'type' => 'number'],
-                        ['name' => 'tag', 'label' => 'Filter tag', 'type' => 'text'],
-                        ['name' => 'category', 'label' => 'Filter category', 'type' => 'text'],
-                    ],
-                    'slots' => [],
-                ],
-                'html' => <<<'HTML'
-<section class="cms-list wrap">
-  {{#if heading}}<h2>{{heading}}</h2>{{/if}}
-  <div class="cms-list__items">
-    {{#each items}}
-    <article class="cms-list__item">
-      {{#if image}}<a href="{{url}}"><img src="{{image}}" alt="" loading="lazy" decoding="async"></a>{{/if}}
-      <h3><a href="{{url}}">{{title}}</a></h3>
-      {{#if excerpt}}<p>{{excerpt}}</p>{{/if}}
-    </article>
-    {{/each}}
-  </div>
-</section>
-HTML,
-                'css' => <<<'CSS'
-.cms-list { padding: 2rem 0; }
-.cms-list__items { display: grid; gap: 1.25rem; }
-.cms-list__item { padding: 1rem 0; border-bottom: 1px solid var(--color-border); }
-.cms-list__item img { border-radius: var(--radius-md); margin-bottom: .75rem; max-height: 12rem; width: 100%; object-fit: cover; }
-.cms-list__item h3 { margin: 0 0 .35rem; }
-.cms-list__item p { margin: 0; color: var(--color-muted); }
-CSS,
-            ],
-        ];
     }
 
     public static function defaultFooter(): string
@@ -689,7 +510,6 @@ CSS,
                 'html' => '{{{html}}}',
                 'css' => '',
             ],
-            ...self::cmsBlockTypes(),
         ];
     }
 }

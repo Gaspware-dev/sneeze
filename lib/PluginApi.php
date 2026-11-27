@@ -14,7 +14,9 @@ declare(strict_types=1);
  * Repository validation failures still end the request through Response::error,
  * the same JSON shape the studio API returns.
  *
- * Do not call preview() or publish() from a compile hook. That re-enters the compiler.
+ * Do not call preview(), publish(), compileDocument(), or writeSiteFile() from a
+ * compile hook. preview() and compileDocument() re-enter the compiler.
+ * publish() and writeSiteFile() run while a compile is still on the stack.
  */
 class PluginApi
 {
@@ -87,6 +89,7 @@ class PluginApi
             self::method('draft', 'updateBlockData', 'Return a new tree with one block data object replaced. Siblings stay. Does not write the database.', 'tree: list, id: int|string, data: array', 'list', null),
             self::method('draft', 'patchBlockData', 'Return a new tree with keys merged into one block data object. Other keys and siblings stay. Does not write the database.', 'tree: list, id: int|string, partial: array', 'list', null),
             self::method('draft', 'removeBlock', 'Return a new tree without that block or its children. Does not write the database.', 'tree: list, id: int|string', 'list', null),
+            self::method('html', 'cleanHtml', 'Strip disallowed tags and attributes. Same cleaner the studio uses for rich text.', 'html: string', 'string', null),
             self::method('site.read', 'pages', 'Pages without block trees. Same rows as GET /api/pages.', '', 'list', 'site.read'),
             self::method('site.read', 'page', 'One page, including its block tree. Same shape as GET /api/pages/{id}.', 'id: int', 'array', 'site.read'),
             self::method('site.read', 'templates', 'Every template.', '', 'list', 'site.read'),
@@ -94,8 +97,9 @@ class PluginApi
             self::method('site.read', 'blockTypes', 'Every block type, including schema, html, css, and js.', '', 'list', 'site.read'),
             self::method('site.read', 'blockType', 'One block type.', 'id: int', 'array', 'site.read'),
             self::method('site.read', 'design', 'Tokens, stylesheets, scripts, chrome, and toolchain. Same payload as GET /api/design.', '', 'array', 'site.read'),
-            self::method('site.read', 'posts', 'Built-in posts. Pass a status of draft or published, or null for all.', 'status?: string|null', 'list', 'site.read'),
-            self::method('site.read', 'post', 'One built-in post.', 'id: int', 'array', 'site.read'),
+            self::method('site.read', 'site', 'Site title, web base, and home URL. home_url uses the same shape as a compiled page.', '', '{title: string, web_base: string, home_url: string}', 'site.read'),
+            self::method('site.read', 'publicPath', 'Public URL for a path relative to the site root.', 'relative: string', 'string', 'site.read'),
+            self::method('site.read', 'pagePath', 'Public URL for a page slug. The index slug is index.html.', 'slug: string', 'string', 'site.read'),
             self::method('site.read', 'media', 'Studio media library.', '', 'list', 'site.read'),
             self::method('site.read', 'user', 'The signed-in user (id, username, role), or null.', '', 'array|null', 'site.read'),
             self::method('site.read', 'preview', 'Preview HTML for a page. draft uses the same keys as POST /api/pages/{id}/preview, including blocks and template. Includes preview chrome and is not minified.', 'pageId: int, draft?: array|null', 'string', 'site.read'),
@@ -113,14 +117,13 @@ class PluginApi
             self::method('site.write', 'deleteStylesheet', 'Delete a global stylesheet.', 'id: int', 'void', 'site.write'),
             self::method('site.write', 'saveScript', 'Create or update a global script. placement is head or footer.', 'data: array', 'array', 'site.write'),
             self::method('site.write', 'deleteScript', 'Delete a global script.', 'id: int', 'void', 'site.write'),
-            self::method('site.write', 'savePost', 'Create or update a built-in post. Same fields as POST /api/cms/posts.', 'data: array', 'array', 'site.write'),
-            self::method('site.write', 'deletePost', 'Delete a built-in post.', 'id: int', 'void', 'site.write'),
             self::method('site.write', 'importMedia', 'Copy a file from this plugin directory into the studio media library.', 'relativePath: string', 'array', 'site.write'),
             self::method('site.write', 'importMediaBytes', 'Store file bytes in the media library. Same 10 MB and file-type limits as an upload.', 'filename: string, contents: string', 'array', 'site.write'),
             self::method('site.write', 'importMediaFromUrl', 'Download an http or https URL into the media library. Same 10 MB and file-type limits as an upload.', 'url: string, filename?: string', 'array', 'site.write'),
             self::method('site.write', 'saveToolchain', 'Save toolchain settings: typescript, tailwind, and tailwind_config_ts.', 'data: array', 'array', 'site.write'),
+            self::method('compile', 'compileDocument', 'Compile one HTML document from a template and the HTML placed in {{slot:content}}. Runs compile.context, site chrome, design tokens, global CSS and JS, template CSS and JS, extra_css, TypeScript, Tailwind, media URL rewrite for page.slug, and minify when preview is false, then compile.html. No block tree and no preview selection chrome. template_id is an optional int. template ({html, css?, js?}) is required when template_id is omitted. page accepts title, slug, seo_title, seo_description, robots, canonical, og_image, json_ld, header_mode, footer_mode, header_html, and footer_html. preview defaults to false. Throws if called while compiling.', 'spec: array', 'string', 'compile'),
+            self::method('site.write', 'writeSiteFile', 'Write a file under the site root. Backs up an existing file, then renames the new file into place. Rejects ".." and paths outside the site root. Throws if called while compiling.', 'relativePath: string, content: string', 'void', 'site.write'),
             self::method('site.write', 'publish', 'Publish one page. Same result as POST /api/pages/{id}/publish.', 'pageId: int', 'array', 'site.write'),
-            self::method('site.write', 'publishPosts', 'Publish built-in posts, the post index, the feed, and the sitemap.', '', 'array', 'site.write'),
         ];
     }
 
@@ -438,18 +441,39 @@ class PluginApi
         ];
     }
 
-    /** @return list<array<string, mixed>> */
-    public function posts(?string $status = null): array
+    /** Strip disallowed tags and attributes. */
+    public function cleanHtml(string $html): string
     {
-        $this->requireCapability('site.read');
-        return PostRepository::all($status);
+        return (new Sanitizer())->clean($html);
     }
 
-    /** @return array<string, mixed> */
-    public function post(int $id): array
+    /**
+     * @return array{title: string, web_base: string, home_url: string}
+     */
+    public function site(): array
     {
         $this->requireCapability('site.read');
-        return PostRepository::get($id);
+        $webBase = Config::siteWebBase();
+        $home = $webBase === '/' ? 'index.html' : $webBase . 'index.html';
+        return [
+            'title' => (string) Config::get('site_title', 'Sneeze'),
+            'web_base' => $webBase,
+            'home_url' => $home,
+        ];
+    }
+
+    /** Public URL for a path relative to the site root. */
+    public function publicPath(string $relative): string
+    {
+        $this->requireCapability('site.read');
+        return Compiler::absoluteUrl($relative);
+    }
+
+    /** Public URL for a page slug. */
+    public function pagePath(string $slug): string
+    {
+        $this->requireCapability('site.read');
+        return Compiler::pageUrl($slug);
     }
 
     /** @return list<array<string, mixed>> */
@@ -582,19 +606,6 @@ class PluginApi
     {
         $this->requireCapability('site.write');
         DesignRepository::deleteScript($id);
-    }
-
-    /** @param array<string, mixed> $data */
-    public function savePost(array $data): array
-    {
-        $this->requireCapability('site.write');
-        return PostRepository::save($data);
-    }
-
-    public function deletePost(int $id): void
-    {
-        $this->requireCapability('site.write');
-        PostRepository::delete($id);
     }
 
     /** @return array<string, mixed> */
@@ -763,6 +774,47 @@ class PluginApi
         return $name;
     }
 
+    /**
+     * Compile one document from a template and slot HTML. No block tree.
+     *
+     * @param array<string, mixed> $spec
+     */
+    public function compileDocument(array $spec): string
+    {
+        $this->requireCapability('compile');
+        if (Compiler::isCompiling()) {
+            throw new PluginException('compileDocument() cannot be called from a compile hook');
+        }
+        if (!is_array($spec['page'] ?? null)) {
+            throw new PluginException('compileDocument requires a page');
+        }
+        $templateId = (int) ($spec['template_id'] ?? 0);
+        $inline = $spec['template'] ?? null;
+        if ($templateId < 1 && !is_array($inline)) {
+            throw new PluginException('compileDocument requires a template');
+        }
+        if ($templateId < 1 && !is_string($inline['html'] ?? null)) {
+            throw new PluginException('compileDocument requires template html');
+        }
+        if (array_key_exists('content', $spec) && !is_string($spec['content'])) {
+            throw new PluginException('compileDocument content must be a string');
+        }
+        if (array_key_exists('extra_css', $spec) && !is_string($spec['extra_css'])) {
+            throw new PluginException('compileDocument extra_css must be a string');
+        }
+        return (new Compiler())->compileDocument($spec);
+    }
+
+    /** Write a file under the site root. */
+    public function writeSiteFile(string $relativePath, string $content): void
+    {
+        $this->requireCapability('site.write');
+        if (Compiler::isCompiling()) {
+            throw new PluginException('writeSiteFile() cannot be called from a compile hook');
+        }
+        (new Publisher())->writeSiteFile($relativePath, $content);
+    }
+
     /** @return array<string, mixed> */
     public function publish(int $pageId): array
     {
@@ -772,17 +824,6 @@ class PluginApi
         }
         $user = Auth::user();
         return (new Publisher())->publishPage($pageId, $user ? (int) $user['id'] : null);
-    }
-
-    /** @return array<string, mixed> */
-    public function publishPosts(): array
-    {
-        $this->requireCapability('site.write');
-        if (Compiler::isCompiling()) {
-            throw new PluginException('publishPosts() cannot be called from a compile hook');
-        }
-        $user = Auth::user();
-        return (new Publisher())->publishPosts($user ? (int) $user['id'] : null);
     }
 
     private function requireCapability(string $capability): void

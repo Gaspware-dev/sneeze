@@ -95,6 +95,8 @@ Template language (intentionally small, no Composer):
 
 ## Headless CMS (cached)
 
+The built-in CMS described in this section now lives in the cms plugin.
+
 Visitors never talk to a CMS. Content lands in SQLite (`cms_entries`), then binds into blocks or publishes as static files.
 
 **Built-in posts:** Editors write Markdown posts in the CMS workspace (title, excerpt, featured image, author, categories/tags, SEO). Saving a published post syncs into the built-in `builtin_posts` source. **Publish posts** writes `posts/{slug}.html`, `posts/index.html`, `feed.xml`, and `sitemap.xml` with Open Graph, Twitter cards, and JSON-LD `BlogPosting`.

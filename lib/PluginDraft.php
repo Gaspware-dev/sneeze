@@ -37,8 +37,6 @@ class PluginDraft
             'slot' => $slot,
             'data' => $data,
             'children' => [],
-            'cms_source_id' => null,
-            'cms_entry_key' => null,
         ];
         $index = array_key_exists('index', $spec) ? (int) $spec['index'] : null;
         $copy = self::copyTree($tree);

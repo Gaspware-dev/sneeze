@@ -83,7 +83,7 @@ class PluginClient
             ],
             [
                 'name' => 'sneeze.studio.openWorkspace',
-                'summary' => 'Show a studio workspace: studio, library, design, media, cms, users, plugins, settings, or a plugin workspace id.',
+                'summary' => 'Show a studio workspace: studio, library, design, media, users, plugins, settings, or a plugin workspace id.',
                 'signature' => '(name: string): boolean',
             ],
             [
