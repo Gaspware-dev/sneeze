@@ -6,6 +6,10 @@ class Publisher
 {
     public function publishPage(int $pageId, ?int $userId = null): array
     {
+        $page = PageRepository::get($pageId, false);
+        if (($page['archived_at'] ?? null) !== null) {
+            Response::error('Restore this page before publishing');
+        }
         $result = $this->publishPageWithoutFeeds($pageId, $userId);
         $this->writeSitemap();
         $this->finishPublish('page', $userId, [$pageId]);
@@ -16,13 +20,32 @@ class Publisher
     {
         $results = [];
         $pageIds = [];
-        foreach (PageRepository::all() as $page) {
+        foreach (PageRepository::active() as $page) {
             $pageIds[] = (int) $page['id'];
             $results[] = $this->publishPageWithoutFeeds((int) $page['id'], $userId);
         }
         $this->writeSitemap();
         $this->finishPublish('all', $userId, $pageIds);
         return ['ok' => true, 'pages' => $results];
+    }
+
+    /**
+     * Remove a page's published HTML, keep a backup when a file exists, and rewrite the sitemap
+     * from pages that are not archived.
+     *
+     * @param array<string, mixed> $page
+     */
+    public function unpublishPage(array $page): void
+    {
+        $relative = Compiler::outputPath((string) ($page['slug'] ?? ''));
+        $full = $this->siteFile($relative);
+        if ($full !== null && is_file($full)) {
+            $this->backup($relative, $full);
+            if (!unlink($full)) {
+                Response::error('Failed to remove published file', 500);
+            }
+        }
+        $this->writeSitemap();
     }
 
     /**
@@ -39,7 +62,7 @@ class Publisher
 
     private function writeSitemap(): void
     {
-        $this->writeSiteFile('sitemap.xml', (new Compiler())->compileSitemap(PageRepository::all()));
+        $this->writeSiteFile('sitemap.xml', (new Compiler())->compileSitemap(PageRepository::active()));
     }
 
     private function publishPageWithoutFeeds(int $pageId, ?int $userId = null): array
@@ -115,6 +138,32 @@ class Publisher
             throw new PluginException('Path traversal denied');
         }
         return $resolved;
+    }
+
+    /**
+     * Absolute path of a published file. Null when its directory does not exist yet.
+     */
+    private function siteFile(string $relativePath): ?string
+    {
+        $relativePath = str_replace('\\', '/', $relativePath);
+        $relativePath = ltrim($relativePath, '/');
+        if ($relativePath === '' || str_contains($relativePath, '..')) {
+            throw new PluginException('Invalid path');
+        }
+
+        $root = realpath(Config::siteRoot());
+        if ($root === false) {
+            throw new PluginException('Invalid path');
+        }
+        $full = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+        $realDir = realpath(dirname($full));
+        if ($realDir === false) {
+            return null;
+        }
+        if ($realDir !== $root && !str_starts_with($realDir, $root . DIRECTORY_SEPARATOR)) {
+            throw new PluginException('Path traversal denied');
+        }
+        return $realDir . DIRECTORY_SEPARATOR . basename($full);
     }
 
     public static function relativeUrlTo(string $fromFile, string $toPath): string

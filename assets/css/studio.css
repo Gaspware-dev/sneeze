@@ -35,6 +35,16 @@ body.studio-app {
   min-width: 9rem;
 }
 
+.studio-page-picker select option,
+.studio-page-picker select optgroup {
+  background: var(--color-white);
+  color: var(--color-text);
+}
+
+.studio-page-picker select optgroup {
+  font-weight: 700;
+}
+
 .studio-workspaces {
   display: flex;
   gap: 0.15rem;

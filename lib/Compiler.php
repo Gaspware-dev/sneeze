@@ -289,7 +289,7 @@ class Compiler
         $webBase = Config::siteWebBase();
         $home = $webBase === '/' ? 'index.html' : $webBase . 'index.html';
         $pages = [];
-        foreach (PageRepository::all() as $item) {
+        foreach (PageRepository::active() as $item) {
             $url = self::pageUrl($item['slug'], $webBase);
             $pages[] = [
                 'id' => $item['id'],

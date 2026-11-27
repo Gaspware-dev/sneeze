@@ -29,6 +29,8 @@ $user = Auth::user();
       <select id="page-select"></select>
     </label>
     <button type="button" class="btn btn--header btn--sm" id="btn-new-page">New page</button>
+    <button type="button" class="btn btn--header btn--sm" id="btn-archive-page" disabled>Archive</button>
+    <button type="button" class="btn btn--header btn--sm admin-only hidden" id="btn-delete-page" disabled>Delete</button>
     <button type="button" class="btn btn--header btn--sm admin-only hidden" id="btn-import-html">Import HTML</button>
 
     <nav class="studio-workspaces" id="workspace-nav">
