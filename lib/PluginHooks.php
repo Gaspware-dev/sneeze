@@ -20,6 +20,7 @@ class PluginHooks
     public const BLOCK_HTML = 'block.html';
     public const PUBLISH_BEFORE = 'publish.before';
     public const PUBLISH_AFTER = 'publish.after';
+    public const PUBLISH_FINISHED = 'publish.finished';
 
     /**
      * @var array<string, list<array{priority: int, seq: int, plugin: string, kind: string, fn: callable}>>
@@ -44,6 +45,7 @@ class PluginHooks
             self::BLOCK_HTML,
             self::PUBLISH_BEFORE,
             self::PUBLISH_AFTER,
+            self::PUBLISH_FINISHED,
         ];
     }
 
@@ -56,13 +58,13 @@ class PluginHooks
             [
                 'name' => self::COMPILE_CONTEXT,
                 'kind' => 'filter',
-                'summary' => 'Template context before a page, post, or post index is rendered.',
+                'summary' => 'Template context before a page or compiled document is rendered.',
                 'arguments' => 'value: array context; context: {page: array, preview: bool}',
             ],
             [
                 'name' => self::COMPILE_BLOCKS,
                 'kind' => 'filter',
-                'summary' => 'Block tree of a page before it is rendered. Not fired for posts.',
+                'summary' => 'Block tree of a page before it is rendered. compileDocument does not fire this hook.',
                 'arguments' => 'value: list block tree; context: {page: array, preview: bool}',
             ],
             [
@@ -74,7 +76,7 @@ class PluginHooks
             [
                 'name' => self::COMPILE_HTML,
                 'kind' => 'filter',
-                'summary' => 'Final HTML of a page, post, or post index, including preview chrome when preview is true.',
+                'summary' => 'Final HTML of a page or compiled document. Page preview includes selection chrome when preview is true. compileDocument never adds that chrome.',
                 'arguments' => 'value: string html; context: {page: array, preview: bool}',
             ],
             [
@@ -94,6 +96,12 @@ class PluginHooks
                 'kind' => 'action',
                 'summary' => 'Runs after a page file is written.',
                 'arguments' => 'context: {page_id: int, user_id: int|null, result: array}',
+            ],
+            [
+                'name' => self::PUBLISH_FINISHED,
+                'kind' => 'action',
+                'summary' => 'Runs once after a page publish has written that page and the pages-only sitemap, and once after publish-all has written every page and the pages-only sitemap.',
+                'arguments' => 'context: {scope: "page"|"all", user_id: int|null, page_ids: list<int>}',
             ],
         ];
     }

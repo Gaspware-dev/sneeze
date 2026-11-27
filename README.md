@@ -131,9 +131,8 @@ return true;
 - **Backup on publish** — previous files copied to `sneeze/data/backups/`
 - **Media library** — studio uploads stay in `sneeze/data/uploads` until publish copies used files into the site asset folder
 - **HTML import** — turn an existing page into a template + HTML block
-- **Built-in posts CMS** — Markdown posts with author, taxonomy, and SEO; publish to `posts/`, RSS, and sitemap
-- **CMS cache** — built-in posts plus remote JSON sources; bind entries into blocks (`cms_entry` / `cms_list`); visitors never call a CMS
-- **SEO / AI presentation** — Open Graph, Twitter cards, JSON-LD `BlogPosting`, canonical/robots, semantic article HTML
+- **SEO** — each published page includes its title and meta description
+- **CMS plugin** — posts and remote sources are a separate plugin with id `cms`. It publishes static files. Visitors never call a CMS
 - **Users** — admin and editor roles
 - **TypeScript** — page/block/global scripts compile to JS on preview and publish
 - **Tailwind CSS** — utility classes in HTML (and `@apply` in CSS) compile against `tailwind.config.ts` and design tokens
@@ -144,6 +143,8 @@ return true;
 Addons are PHP packages an admin enables. They survive **Update Sneeze** because they live in `data/plugins/{id}`. A copy there overrides a bundled plugin with the same id (`plugins/example` is a disabled reference).
 
 Each plugin has a `plugin.json` and a class that implements `SneezePlugin`. The only host object it receives is `PluginApi`. Capabilities in the manifest (`site.read`, `site.write`, `studio`, `routes`, `compile`) are the contract for that object.
+
+The CMS is not built into Sneeze. A separate plugin with id `cms` replaces it and publishes static files only. Visitors never call a CMS. That plugin can sanitize HTML, read the site title and public URLs, compile a document from a template and slot HTML, and write files under the site root. After a page publish or a full publish, core fires `publish.finished`. Core `sitemap.xml` lists pages only. Core does not write `feed.xml` and does not know about posts.
 
 `GET /api/plugins/reference` (admin) returns the manifest fields, core hooks, `PluginApi` methods, and the studio `boot(sneeze)` bridge. That payload is the source for Plugin API documentation.
 

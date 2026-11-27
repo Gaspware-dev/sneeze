@@ -7,60 +7,39 @@ class Publisher
     public function publishPage(int $pageId, ?int $userId = null): array
     {
         $result = $this->publishPageWithoutFeeds($pageId, $userId);
-        $this->publishFeedsAndSitemap();
+        $this->writeSitemap();
+        $this->finishPublish('page', $userId, [$pageId]);
         return $result;
     }
 
     public function publishAll(?int $userId = null): array
     {
         $results = [];
+        $pageIds = [];
         foreach (PageRepository::all() as $page) {
-            $pageResult = $this->publishPageWithoutFeeds((int) $page['id'], $userId);
-            $results[] = $pageResult;
+            $pageIds[] = (int) $page['id'];
+            $results[] = $this->publishPageWithoutFeeds((int) $page['id'], $userId);
         }
-        $posts = $this->publishPosts($userId, false);
-        $this->publishFeedsAndSitemap();
-        return ['ok' => true, 'pages' => $results, 'posts' => $posts];
+        $this->writeSitemap();
+        $this->finishPublish('all', $userId, $pageIds);
+        return ['ok' => true, 'pages' => $results];
     }
 
-    public function publishPosts(?int $userId = null, bool $writeFeeds = true): array
+    /**
+     * @param list<int> $pageIds
+     */
+    private function finishPublish(string $scope, ?int $userId, array $pageIds): void
     {
-        PostRepository::syncAllToCache();
-        $compiler = new Compiler();
-        $published = [];
-        foreach (PostRepository::published() as $post) {
-            $html = $compiler->compilePost($post, false);
-            $relative = 'posts/' . $post['slug'] . '.html';
-            $this->writeSiteFile($relative, $html);
-            $published[] = [
-                'id' => $post['id'],
-                'slug' => $post['slug'],
-                'path' => $relative,
-                'url' => Compiler::postUrl((string) $post['slug']),
-            ];
-            Auth::audit($userId ?? 0, 'publish_post', $relative);
-        }
-        $indexHtml = $compiler->compilePostIndex(PostRepository::published(), false);
-        $this->writeSiteFile('posts/index.html', $indexHtml);
-        if ($writeFeeds) {
-            $this->publishFeedsAndSitemap();
-        }
-        return [
-            'ok' => true,
-            'posts' => $published,
-            'index' => 'posts/index.html',
-        ];
+        PluginHooks::action(PluginHooks::PUBLISH_FINISHED, [
+            'scope' => $scope,
+            'user_id' => $userId,
+            'page_ids' => array_values($pageIds),
+        ]);
     }
 
-    public function publishFeedsAndSitemap(): void
+    private function writeSitemap(): void
     {
-        $compiler = new Compiler();
-        $posts = PostRepository::published();
-        $this->writeSiteFile('feed.xml', $compiler->compileRss($posts));
-        $this->writeSiteFile('sitemap.xml', $compiler->compileSitemap(
-            PageRepository::all(),
-            $posts
-        ));
+        $this->writeSiteFile('sitemap.xml', (new Compiler())->compileSitemap(PageRepository::all()));
     }
 
     private function publishPageWithoutFeeds(int $pageId, ?int $userId = null): array
@@ -117,7 +96,7 @@ class Publisher
         $relativePath = str_replace('\\', '/', $relativePath);
         $relativePath = ltrim($relativePath, '/');
         if ($relativePath === '' || str_contains($relativePath, '..')) {
-            Response::error('Invalid path', 400);
+            throw new PluginException('Invalid path');
         }
 
         $siteRoot = Config::siteRoot();
@@ -129,11 +108,11 @@ class Publisher
         $realDir = realpath($dir);
         $root = realpath($siteRoot);
         if ($realDir === false || $root === false) {
-            Response::error('Invalid path', 400);
+            throw new PluginException('Invalid path');
         }
         $resolved = $realDir . DIRECTORY_SEPARATOR . basename($full);
         if (!str_starts_with($resolved, $root)) {
-            Response::error('Path traversal denied', 403);
+            throw new PluginException('Path traversal denied');
         }
         return $resolved;
     }

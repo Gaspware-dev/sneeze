@@ -232,8 +232,6 @@ class PageRepository
             'slot' => $row['slot'] ?: 'content',
             'sort_order' => (int) $row['sort_order'],
             'data' => Json::object($row['data_json'] ?? '{}'),
-            'cms_source_id' => $row['cms_source_id'] !== null ? (int) $row['cms_source_id'] : null,
-            'cms_entry_key' => $row['cms_entry_key'],
             'children' => [],
             'block_type' => [
                 'id' => (int) $row['block_type_id'],
@@ -270,13 +268,6 @@ class PageRepository
                     $data = [];
                 }
                 $data = self::sanitizeData($typeId, $data);
-                $cmsSource = isset($node['cms_source_id']) && $node['cms_source_id'] !== '' && $node['cms_source_id'] !== null
-                    ? (int) $node['cms_source_id']
-                    : null;
-                $cmsKey = isset($node['cms_entry_key']) ? trim((string) $node['cms_entry_key']) : null;
-                if ($cmsKey === '') {
-                    $cmsKey = null;
-                }
 
                 $id = (int) ($node['id'] ?? 0);
                 $exists = false;
@@ -289,14 +280,14 @@ class PageRepository
                 if ($exists) {
                     $pdo->prepare(
                         'UPDATE page_blocks SET block_type_id = ?, parent_id = ?, slot = ?, sort_order = ?, data_json = ?,
-                            cms_source_id = ?, cms_entry_key = ?, updated_at = datetime(\'now\')
+                            updated_at = datetime(\'now\')
                          WHERE id = ?'
-                    )->execute([$typeId, $parentId, $slot, $index, Json::encode($data), $cmsSource, $cmsKey, $id]);
+                    )->execute([$typeId, $parentId, $slot, $index, Json::encode($data), $id]);
                 } else {
                     $pdo->prepare(
-                        'INSERT INTO page_blocks (page_id, block_type_id, parent_id, slot, sort_order, data_json, cms_source_id, cms_entry_key)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-                    )->execute([$pageId, $typeId, $parentId, $slot, $index, Json::encode($data), $cmsSource, $cmsKey]);
+                        'INSERT INTO page_blocks (page_id, block_type_id, parent_id, slot, sort_order, data_json)
+                         VALUES (?, ?, ?, ?, ?, ?)'
+                    )->execute([$pageId, $typeId, $parentId, $slot, $index, Json::encode($data)]);
                     $id = (int) $pdo->lastInsertId();
                 }
 
@@ -369,6 +360,13 @@ class PageRepository
             } else {
                 $allowed[$name] = is_scalar($value) ? (string) $value : '';
             }
+        }
+        if (isset($data['_cms']) && is_array($data['_cms'])) {
+            $entryKey = $data['_cms']['entry_key'] ?? null;
+            $allowed['_cms'] = [
+                'source_id' => (int) ($data['_cms']['source_id'] ?? 0),
+                'entry_key' => ($entryKey === null || $entryKey === '') ? null : (string) $entryKey,
+            ];
         }
         return $allowed;
     }

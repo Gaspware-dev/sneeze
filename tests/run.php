@@ -139,7 +139,7 @@ expect('fragment not document', $frag['is_document'], false);
 expectContains('fragment body', $frag['content'], 'Fragment');
 
 Config::init(dirname(__DIR__));
-expect('version current tree', Version::current(), '2.0.0-alpha.1');
+expect('version current tree', Version::current(), '2.0.0-alpha.2');
 
 file_put_contents($installDir . '/VERSION', "2.0.0-alpha1\n");
 file_put_contents($installDir . '/index.php', "<?php\n// sneeze stub\n");
@@ -209,41 +209,6 @@ expectContains('preview dropzone', $preview, 'sneeze-dropzone');
 expectContains('preview drop message', $preview, 'sneeze:drop');
 expectContains('preview edit message', $preview, 'sneeze:edit');
 expectContains('preview editable field', $preview, 'sneeze-editable');
-expectContains('preview posts nav', $preview, 'posts/index.html');
-
-$mdHtml = Markdown::toHtml("# Hello\n\nA **bold** [link](https://example.com).\n\n- one\n- two");
-expectContains('md heading', $mdHtml, '<h1>Hello</h1>');
-expectContains('md strong', $mdHtml, '<strong>bold</strong>');
-expectContains('md link', $mdHtml, 'href="https://example.com"');
-expectContains('md list', $mdHtml, '<ul>');
-
-$builtinId = CmsRepository::ensureBuiltinSource();
-expect('builtin source id', $builtinId > 0, true);
-$slugs = array_column(BlockTypeRepository::all(), 'slug');
-expect('cms_entry block', in_array('cms_entry', $slugs, true), true);
-expect('cms_list block', in_array('cms_list', $slugs, true), true);
-$tplSlugs = array_column(TemplateRepository::all(), 'slug');
-expect('post template', in_array('post', $tplSlugs, true), true);
-
-$post = PostRepository::save([
-    'title' => 'Launch notes',
-    'slug' => 'launch-notes',
-    'status' => 'published',
-    'body_markdown' => "## Why it matters\n\nShip **static** HTML with SEO.\n\n![Hero](uploads/hero.jpg)",
-    'excerpt' => 'How Sneeze publishes posts.',
-    'author_name' => 'Ada',
-    'categories' => ['news'],
-    'tags' => ['seo', 'ai'],
-    'seo_title' => 'Launch notes | Sneeze',
-    'seo_description' => 'SEO friendly launch notes for AI and search.',
-    'featured_image' => 'uploads/hero.jpg',
-]);
-expect('post saved', $post['slug'], 'launch-notes');
-expectContains('post html from md', $post['body_html'], '<h2>Why it matters</h2>');
-$entries = CmsRepository::entries($builtinId);
-expect('builtin cache entry', count($entries) >= 1, true);
-$synced = (new CmsAdapter())->sync(CmsRepository::get($builtinId));
-expect('builtin sync fetched', $synced['fetched'] >= 1, true);
 
 $siteRoot = $installDir . '/site';
 mkdir($siteRoot, 0755, true);
@@ -251,6 +216,48 @@ Config::set('site_root', $siteRoot);
 Config::set('setup_complete', true);
 Config::save();
 
+$hostApi = PluginApi::forPlugin([
+    'id' => 'host',
+    'name' => 'Host',
+    'version' => '1',
+    'capabilities' => ['site.read', 'site.write', 'compile'],
+], $installDir);
+$cleaned = $hostApi->cleanHtml('<p>Hi</p><script>alert(1)</script>');
+expect('cleanHtml strips script', str_contains(strtolower($cleaned), '<script'), false);
+expectContains('cleanHtml keeps paragraph', $cleaned, 'Hi');
+$siteInfo = $hostApi->site();
+expect('site title', $siteInfo['title'], 'Sneeze Admin');
+expect('site home url', $siteInfo['home_url'], 'index.html');
+expect('page path', $hostApi->pagePath('about'), 'about.html');
+expect('public path', $hostApi->publicPath('sitemap.xml'), '/sitemap.xml');
+$compiledDoc = $hostApi->compileDocument([
+    'template_id' => (int) $home['template_id'],
+    'page' => [
+        'title' => 'Note',
+        'slug' => 'note',
+        'header_mode' => 'none',
+        'footer_mode' => 'none',
+    ],
+    'content' => '<p id="slot-marker">Hello from the slot</p>',
+    'extra_css' => '.slot-marker { color: #112233; }',
+]);
+expectContains('compileDocument slot', $compiledDoc, 'Hello from the slot');
+expectContains('compileDocument template', $compiledDoc, '<main class="site-main">');
+expectContains('compileDocument extra css', $compiledDoc, '.slot-marker');
+expect('compileDocument no preview chrome', str_contains($compiledDoc, 'sneeze-block'), false);
+expect('compileDocument minified', str_contains($compiledDoc, ':root{'), true);
+try {
+    $hostApi->writeSiteFile('../nope.html', 'no');
+    expect('writeSiteFile rejects dotdot', false, true);
+} catch (PluginException $e) {
+    expectContains('writeSiteFile rejects dotdot', $e->getMessage(), 'Invalid path');
+}
+expect('writeSiteFile did not escape', is_file(dirname($siteRoot) . '/nope.html'), false);
+
+$finished = null;
+PluginHooks::listen(PluginHooks::PUBLISH_FINISHED, static function (array $context) use (&$finished): void {
+    $finished = $context;
+}, 10, 'finish-test', 'action');
 $published = (new Publisher())->publishPage((int) $home['id']);
 expect('publish path', $published['path'], 'index.html');
 expect('wrote file', is_file($siteRoot . '/index.html'), true);
@@ -259,55 +266,14 @@ expectContains('written hero', $written, 'How it works');
 expectContains('published minified', $written, ':root{');
 expect('published no script', str_contains($written, '<script'), false);
 expect('sitemap written', is_file($siteRoot . '/sitemap.xml'), true);
-expect('feed written', is_file($siteRoot . '/feed.xml'), true);
-
-$postsPublish = (new Publisher())->publishPosts(0);
-expect('post file written', is_file($siteRoot . '/posts/launch-notes.html'), true);
-expect('post index written', is_file($siteRoot . '/posts/index.html'), true);
-$postHtml = file_get_contents($siteRoot . '/posts/launch-notes.html') ?: '';
-expectContains('post json-ld', $postHtml, 'BlogPosting');
-expectContains('post og title', $postHtml, 'property="og:title"');
-expectContains('post twitter card', $postHtml, 'twitter:card');
-expectContains('post canonical', $postHtml, 'rel="canonical"');
-expectContains('post article body', $postHtml, 'Why it matters');
+expect('page publish skips feed', is_file($siteRoot . '/feed.xml'), false);
 $sitemap = file_get_contents($siteRoot . '/sitemap.xml') ?: '';
-expectContains('sitemap has post', $sitemap, 'posts/launch-notes.html');
-$feed = file_get_contents($siteRoot . '/feed.xml') ?: '';
-expectContains('rss item', $feed, 'Launch notes');
-
-$listType = null;
-foreach (BlockTypeRepository::all() as $type) {
-    if ($type['slug'] === 'cms_list') {
-        $listType = $type;
-        break;
-    }
-}
-$listPreview = (new Compiler())->compileDraft(
-    [
-        'id' => $home['id'],
-        'title' => 'Home',
-        'slug' => 'index',
-        'seo_title' => 'Home',
-        'seo_description' => '',
-        'header_mode' => 'none',
-        'footer_mode' => 'none',
-        'custom_css' => '',
-        'custom_js' => '',
-    ],
-    TemplateRepository::get((int) $home['template_id']),
-    [[
-        'id' => -10,
-        'block_type_id' => $listType['id'],
-        'block_type' => $listType,
-        'slot' => 'content',
-        'cms_source_id' => $builtinId,
-        'cms_entry_key' => null,
-        'data' => ['heading' => 'From CMS', 'limit' => 5],
-        'children' => [],
-    ]],
-    false
-);
-expectContains('cms list renders entry', $listPreview, 'Launch notes');
+expectContains('sitemap has home', $sitemap, 'index.html');
+expect('sitemap has no posts path', str_contains($sitemap, 'posts/'), false);
+expect('publish.finished scope', $finished['scope'] ?? '', 'page');
+expect('publish.finished user', array_key_exists('user_id', is_array($finished) ? $finished : []) ? $finished['user_id'] : 'missing', null);
+expect('publish.finished pages', $finished['page_ids'] ?? null, [(int) $home['id']]);
+PluginHooks::forget('finish-test');
 
 $withJs = (new Compiler())->compilePage((int) $home['id'], false, [
     'custom_js' => "const greet = (name: string): string => `ok`;\nconsole.log(greet('a'));\n",
@@ -830,6 +796,92 @@ $encoded = Plugins::encodeEvent($slowEvents[0]) . Plugins::encodeEvent($slowEven
 expectContains('sse data line', $encoded, 'data: {"step":1}');
 expect('sse frames', substr_count($encoded, "\n\n"), 2);
 
+$legacyPdo = Database::pdo();
+$legacyPdo->prepare(
+    'INSERT INTO cms_sources (name, adapter, config_json, last_error) VALUES (?, ?, ?, ?)'
+)->execute(['Legacy source', 'http_json', '{"url":"https://example.com/items"}', null]);
+$legacySourceId = (int) $legacyPdo->lastInsertId();
+$legacyPdo->prepare(
+    'INSERT INTO cms_posts (
+        title, slug, body_markdown, body_html, excerpt, featured_image, author_name, author_url,
+        categories_json, tags_json, status, published_at, seo_title, seo_description, og_image,
+        canonical_url, robots
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+)->execute([
+    'Legacy post',
+    'legacy-post',
+    '# Hi',
+    '<h1>Hi</h1>',
+    'An excerpt',
+    'uploads/legacy.jpg',
+    'Ada',
+    'https://example.com/ada',
+    '["news"]',
+    '["seo"]',
+    'published',
+    '2026-01-02 03:04:05',
+    'Legacy SEO',
+    'Legacy description',
+    'uploads/og.jpg',
+    'https://example.com/legacy-post',
+    'index,follow',
+]);
+$legacyPostId = (int) $legacyPdo->lastInsertId();
+$legacyPdo->prepare(
+    'INSERT INTO cms_entries (source_id, external_id, data_json) VALUES (?, ?, ?)'
+)->execute([$legacySourceId, 'ext-1', '{"title":"Remote"}']);
+$headingId = (int) $headingType['id'];
+$legacyPdo->prepare(
+    'INSERT INTO page_blocks (page_id, block_type_id, slot, sort_order, data_json, cms_source_id, cms_entry_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?)'
+)->execute([
+    (int) $home['id'],
+    $headingId,
+    'content',
+    50,
+    '{"text":"Bound","level":"h2"}',
+    $legacySourceId,
+    'ext-1',
+]);
+$legacyBlockId = (int) $legacyPdo->lastInsertId();
+$legacyPdo->exec('PRAGMA user_version = 6');
+unset($legacyPdo);
+remigrate();
+$copiedPosts = pluginOption('cms', 'posts');
+expect('legacy post count', is_array($copiedPosts) ? count($copiedPosts) : 0, 1);
+expect('legacy post slug', $copiedPosts[0]['slug'] ?? '', 'legacy-post');
+expect('legacy post id', $copiedPosts[0]['id'] ?? 0, $legacyPostId);
+expect('legacy post categories', $copiedPosts[0]['categories'] ?? null, ['news']);
+expect('legacy post tags', $copiedPosts[0]['tags'] ?? null, ['seo']);
+expect('legacy post markdown', $copiedPosts[0]['body_markdown'] ?? '', '# Hi');
+expect('legacy post html', $copiedPosts[0]['body_html'] ?? '', '<h1>Hi</h1>');
+expect('legacy post published at', $copiedPosts[0]['published_at'] ?? '', '2026-01-02 03:04:05');
+expect('legacy next post id', pluginOption('cms', 'next_post_id'), $legacyPostId + 1);
+$copiedSources = pluginOption('cms', 'sources');
+expect('legacy source adapter', $copiedSources[0]['adapter'] ?? '', 'http_json');
+expect('legacy source config url', $copiedSources[0]['config']['url'] ?? '', 'https://example.com/items');
+expect('legacy next source id', pluginOption('cms', 'next_source_id'), $legacySourceId + 1);
+$copiedEntries = pluginOption('cms', 'entries');
+expect('legacy entry id', $copiedEntries[0]['external_id'] ?? '', 'ext-1');
+expect('legacy entry title', $copiedEntries[0]['data']['title'] ?? '', 'Remote');
+$bound = Database::pdo()->prepare('SELECT data_json, cms_source_id FROM page_blocks WHERE id = ?');
+$bound->execute([$legacyBlockId]);
+$boundRow = $bound->fetch();
+$boundData = json_decode((string) ($boundRow['data_json'] ?? ''), true);
+expect('legacy binding source', $boundData['_cms']['source_id'] ?? null, $legacySourceId);
+expect('legacy binding key', $boundData['_cms']['entry_key'] ?? null, 'ext-1');
+expect('legacy binding keeps text', $boundData['text'] ?? '', 'Bound');
+expect('legacy column kept', $boundRow['cms_source_id'] !== null, true);
+expect('legacy posts table kept', (int) Database::pdo()->query('SELECT COUNT(*) FROM cms_posts')->fetchColumn(), 1);
+
+unset($bound);
+Database::pdo()->prepare('UPDATE cms_posts SET title = ? WHERE id = ?')->execute(['Changed', $legacyPostId]);
+Database::pdo()->exec('PRAGMA user_version = 6');
+remigrate();
+expect('legacy copy skipped', pluginOption('cms', 'posts')[0]['title'] ?? '', 'Legacy post');
+expect('legacy table not dropped', (int) Database::pdo()->query('SELECT COUNT(*) FROM cms_posts')->fetchColumn(), 1);
+expect('user version 7', (int) Database::pdo()->query('PRAGMA user_version')->fetchColumn(), 7);
+
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);
 
@@ -859,6 +911,23 @@ function copyPluginDir(string $from, string $to): void
         }
         copy($item->getPathname(), $dest);
     }
+}
+
+function remigrate(): void
+{
+    $prop = new ReflectionProperty(Database::class, 'pdo');
+    $prop->setValue(null, null);
+    Database::connect(Config::dataDir());
+}
+
+function pluginOption(string $pluginId, string $key): mixed
+{
+    $stmt = Database::pdo()->prepare(
+        'SELECT value_json FROM plugin_options WHERE plugin_id = ? AND option_key = ?'
+    );
+    $stmt->execute([$pluginId, $key]);
+    $json = $stmt->fetchColumn();
+    return json_decode((string) $json, true);
 }
 
 function pluginById(array $plugins, string $id): ?array

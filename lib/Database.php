@@ -233,6 +233,11 @@ SQL);
         if ($version < 6) {
             self::migrateToV6($pdo);
             $pdo->exec('PRAGMA user_version = 6');
+            $version = 6;
+        }
+        if ($version < 7) {
+            self::migrateToV7($pdo);
+            $pdo->exec('PRAGMA user_version = 7');
         }
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
@@ -242,9 +247,6 @@ SQL);
 
         DesignRepository::ensureChrome();
         ToolchainRepository::ensure();
-        CmsRepository::ensureBuiltinSource();
-        Seed::ensureCmsBlocks($pdo);
-        Seed::ensurePostTemplate($pdo);
     }
 
     private static function migrateToV4(PDO $pdo): void
@@ -323,6 +325,134 @@ CREATE TABLE IF NOT EXISTS plugin_options (
     PRIMARY KEY (plugin_id, option_key)
 )
 SQL);
+    }
+
+    /**
+     * Copy leftover built-in CMS rows into plugin_options for plugin id "cms".
+     * Tables and page_blocks columns stay. Skip when that plugin already has posts.
+     */
+    private static function migrateToV7(PDO $pdo): void
+    {
+        if (!self::tableExists($pdo, 'plugin_options')) {
+            return;
+        }
+        $exists = $pdo->query(
+            "SELECT 1 FROM plugin_options WHERE plugin_id = 'cms' AND option_key = 'posts' LIMIT 1"
+        )->fetch();
+        if ($exists) {
+            return;
+        }
+
+        $postCount = self::tableCount($pdo, 'cms_posts');
+        $sourceCount = self::tableCount($pdo, 'cms_sources');
+        $entryCount = self::tableCount($pdo, 'cms_entries');
+        if ($postCount === 0 && $sourceCount === 0 && $entryCount === 0) {
+            return;
+        }
+
+        $posts = [];
+        $maxPostId = 0;
+        if ($postCount > 0) {
+            foreach ($pdo->query('SELECT * FROM cms_posts ORDER BY id') as $row) {
+                $id = (int) $row['id'];
+                $maxPostId = max($maxPostId, $id);
+                $posts[] = [
+                    'id' => $id,
+                    'title' => (string) $row['title'],
+                    'slug' => (string) $row['slug'],
+                    'body_markdown' => (string) ($row['body_markdown'] ?? ''),
+                    'body_html' => (string) ($row['body_html'] ?? ''),
+                    'excerpt' => (string) ($row['excerpt'] ?? ''),
+                    'featured_image' => (string) ($row['featured_image'] ?? ''),
+                    'author_name' => (string) ($row['author_name'] ?? ''),
+                    'author_url' => (string) ($row['author_url'] ?? ''),
+                    'categories' => Json::decodeArray($row['categories_json'] ?? '[]'),
+                    'tags' => Json::decodeArray($row['tags_json'] ?? '[]'),
+                    'status' => (string) ($row['status'] ?? 'draft'),
+                    'published_at' => $row['published_at'],
+                    'seo_title' => (string) ($row['seo_title'] ?? ''),
+                    'seo_description' => (string) ($row['seo_description'] ?? ''),
+                    'og_image' => (string) ($row['og_image'] ?? ''),
+                    'canonical_url' => (string) ($row['canonical_url'] ?? ''),
+                    'robots' => (string) ($row['robots'] ?? ''),
+                    'created_at' => (string) ($row['created_at'] ?? ''),
+                    'updated_at' => (string) ($row['updated_at'] ?? ''),
+                ];
+            }
+        }
+
+        $sources = [];
+        $maxSourceId = 0;
+        if ($sourceCount > 0) {
+            foreach ($pdo->query('SELECT * FROM cms_sources ORDER BY id') as $row) {
+                $id = (int) $row['id'];
+                $maxSourceId = max($maxSourceId, $id);
+                $sources[] = [
+                    'id' => $id,
+                    'name' => (string) $row['name'],
+                    'adapter' => (string) $row['adapter'],
+                    'config' => Json::object($row['config_json'] ?? '{}'),
+                    'last_synced_at' => $row['last_synced_at'],
+                    'last_error' => $row['last_error'],
+                ];
+            }
+        }
+
+        $entries = [];
+        if ($entryCount > 0) {
+            foreach ($pdo->query('SELECT * FROM cms_entries ORDER BY source_id, external_id') as $row) {
+                $entries[] = [
+                    'source_id' => (int) $row['source_id'],
+                    'external_id' => (string) $row['external_id'],
+                    'data' => Json::object($row['data_json'] ?? '{}'),
+                    'synced_at' => (string) ($row['synced_at'] ?? ''),
+                ];
+            }
+        }
+
+        if (self::tableExists($pdo, 'page_blocks')) {
+            $blocks = $pdo->query(
+                'SELECT id, data_json, cms_source_id, cms_entry_key FROM page_blocks WHERE cms_source_id IS NOT NULL'
+            );
+            $update = $pdo->prepare('UPDATE page_blocks SET data_json = ? WHERE id = ?');
+            foreach ($blocks as $row) {
+                $data = Json::object($row['data_json'] ?? '{}');
+                $data['_cms'] = [
+                    'source_id' => (int) $row['cms_source_id'],
+                    'entry_key' => $row['cms_entry_key'] !== null ? (string) $row['cms_entry_key'] : null,
+                ];
+                $update->execute([Json::encode($data), (int) $row['id']]);
+            }
+        }
+
+        self::putPluginOption($pdo, 'cms', 'posts', $posts);
+        self::putPluginOption($pdo, 'cms', 'sources', $sources);
+        self::putPluginOption($pdo, 'cms', 'entries', $entries);
+        self::putPluginOption($pdo, 'cms', 'next_post_id', $maxPostId > 0 ? $maxPostId + 1 : 1);
+        self::putPluginOption($pdo, 'cms', 'next_source_id', $maxSourceId > 0 ? $maxSourceId + 1 : 1);
+    }
+
+    private static function tableExists(PDO $pdo, string $table): bool
+    {
+        $stmt = $pdo->prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
+        $stmt->execute([$table]);
+        return (bool) $stmt->fetch();
+    }
+
+    private static function tableCount(PDO $pdo, string $table): int
+    {
+        if (!self::tableExists($pdo, $table)) {
+            return 0;
+        }
+        return (int) $pdo->query('SELECT COUNT(*) FROM ' . $table)->fetchColumn();
+    }
+
+    private static function putPluginOption(PDO $pdo, string $pluginId, string $key, mixed $value): void
+    {
+        $pdo->prepare(
+            'INSERT INTO plugin_options (plugin_id, option_key, value_json) VALUES (?, ?, ?)
+             ON CONFLICT(plugin_id, option_key) DO UPDATE SET value_json = excluded.value_json'
+        )->execute([$pluginId, $key, Json::encode($value)]);
     }
 
     public static function pdo(): PDO
