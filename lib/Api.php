@@ -150,6 +150,23 @@ class Api
             Response::json(['page' => $page]);
         }
 
+        if (preg_match('#^/api/pages/(\d+)/archive$#', $uri, $m) && $method === 'POST') {
+            Auth::verifyCsrf();
+            $id = (int) $m[1];
+            $page = PageRepository::archive($id);
+            (new Publisher())->unpublishPage($page);
+            Auth::audit((int) $user['id'], 'archive_page', $page['slug']);
+            Response::json(['page' => PageRepository::get($id, false)]);
+        }
+
+        if (preg_match('#^/api/pages/(\d+)/restore$#', $uri, $m) && $method === 'POST') {
+            Auth::verifyCsrf();
+            $id = (int) $m[1];
+            $page = PageRepository::restore($id);
+            Auth::audit((int) $user['id'], 'restore_page', $page['slug']);
+            Response::json(['page' => $page]);
+        }
+
         if (preg_match('#^/api/pages/(\d+)$#', $uri, $m)) {
             $id = (int) $m[1];
             if ($method === 'GET') {
@@ -166,6 +183,7 @@ class Api
                 Auth::requireAdmin();
                 $page = PageRepository::get($id, false);
                 PageRepository::delete($id);
+                (new Publisher())->unpublishPage($page);
                 Auth::audit((int) $user['id'], 'delete_page', $page['slug']);
                 Response::json(['ok' => true]);
             }

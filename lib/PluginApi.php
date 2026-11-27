@@ -14,9 +14,10 @@ declare(strict_types=1);
  * Repository validation failures still end the request through Response::error,
  * the same JSON shape the studio API returns.
  *
- * Do not call preview(), publish(), compileDocument(), or writeSiteFile() from a
- * compile hook. preview() and compileDocument() re-enter the compiler.
- * publish() and writeSiteFile() run while a compile is still on the stack.
+ * Do not call preview(), publish(), archivePage(), deletePage(), compileDocument(),
+ * or writeSiteFile() from a compile hook. preview() and compileDocument() re-enter
+ * the compiler. publish(), archivePage(), deletePage(), and writeSiteFile() write
+ * the site while a compile is still on the stack.
  */
 class PluginApi
 {
@@ -90,7 +91,7 @@ class PluginApi
             self::method('draft', 'patchBlockData', 'Return a new tree with keys merged into one block data object. Other keys and siblings stay. Does not write the database.', 'tree: list, id: int|string, partial: array', 'list', null),
             self::method('draft', 'removeBlock', 'Return a new tree without that block or its children. Does not write the database.', 'tree: list, id: int|string', 'list', null),
             self::method('html', 'cleanHtml', 'Strip disallowed tags and attributes. Same cleaner the studio uses for rich text.', 'html: string', 'string', null),
-            self::method('site.read', 'pages', 'Pages without block trees. Same rows as GET /api/pages.', '', 'list', 'site.read'),
+            self::method('site.read', 'pages', 'Pages without block trees, including archived pages. Same rows as GET /api/pages. archived_at is null unless the page is archived.', '', 'list', 'site.read'),
             self::method('site.read', 'page', 'One page, including its block tree. Same shape as GET /api/pages/{id}.', 'id: int', 'array', 'site.read'),
             self::method('site.read', 'templates', 'Every template.', '', 'list', 'site.read'),
             self::method('site.read', 'template', 'One template, including html, css, and js.', 'id: int', 'array', 'site.read'),
@@ -105,7 +106,9 @@ class PluginApi
             self::method('site.read', 'preview', 'Preview HTML for a page. draft uses the same keys as POST /api/pages/{id}/preview, including blocks and template. Includes preview chrome and is not minified.', 'pageId: int, draft?: array|null', 'string', 'site.read'),
             self::method('site.write', 'createPage', 'Create a page. Same fields as POST /api/pages.', 'data: array', 'array', 'site.write'),
             self::method('site.write', 'updatePage', 'Update a page. Include blocks to replace the tree. Same fields as PUT /api/pages/{id}.', 'id: int, data: array', 'array', 'site.write'),
-            self::method('site.write', 'deletePage', 'Delete a page. The home page cannot be deleted.', 'id: int', 'void', 'site.write'),
+            self::method('site.write', 'deletePage', 'Delete a page and remove its published HTML. The home page cannot be deleted. Throws if called while compiling.', 'id: int', 'void', 'site.write'),
+            self::method('site.write', 'archivePage', 'Archive a page, set it back to draft, and remove its published HTML. The page stays in the database. The home page cannot be archived. Throws if called while compiling.', 'id: int', 'array', 'site.write'),
+            self::method('site.write', 'restorePage', 'Restore an archived page as a draft. Does not publish it or write HTML.', 'id: int', 'array', 'site.write'),
             self::method('site.write', 'saveBlocks', 'Replace a page block tree. Returns the stored tree.', 'pageId: int, tree: list', 'list', 'site.write'),
             self::method('site.write', 'saveTemplate', 'Create or update a template. Pass id to update.', 'data: array', 'array', 'site.write'),
             self::method('site.write', 'deleteTemplate', 'Delete a template that no page uses.', 'id: int', 'void', 'site.write'),
@@ -529,7 +532,31 @@ class PluginApi
     public function deletePage(int $id): void
     {
         $this->requireCapability('site.write');
+        if (Compiler::isCompiling()) {
+            throw new PluginException('deletePage() cannot be called from a compile hook');
+        }
+        $page = PageRepository::get($id, false);
         PageRepository::delete($id);
+        (new Publisher())->unpublishPage($page);
+    }
+
+    /** @return array<string, mixed> */
+    public function archivePage(int $id): array
+    {
+        $this->requireCapability('site.write');
+        if (Compiler::isCompiling()) {
+            throw new PluginException('archivePage() cannot be called from a compile hook');
+        }
+        $page = PageRepository::archive($id);
+        (new Publisher())->unpublishPage($page);
+        return PageRepository::get($id, false);
+    }
+
+    /** @return array<string, mixed> */
+    public function restorePage(int $id): array
+    {
+        $this->requireCapability('site.write');
+        return PageRepository::restore($id);
     }
 
     /**

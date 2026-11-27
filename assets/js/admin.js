@@ -46,6 +46,35 @@ function setSaveState(text) {
   document.getElementById('save-state').textContent = text;
 }
 
+function isHomePage(page) {
+  return page?.slug === 'index';
+}
+
+function isArchivedPage(page) {
+  return !!page?.archived_at;
+}
+
+function pageStatusLabel(page) {
+  if (isArchivedPage(page)) return 'Archived';
+  return page?.status === 'published' ? 'Published' : 'Draft';
+}
+
+function syncPageActions() {
+  const page = state.page;
+  const archiveBtn = document.getElementById('btn-archive-page');
+  const deleteBtn = document.getElementById('btn-delete-page');
+  const publishBtn = document.getElementById('btn-publish');
+  const home = isHomePage(page);
+  const archived = isArchivedPage(page);
+  archiveBtn.textContent = archived ? 'Restore' : 'Archive';
+  archiveBtn.disabled = !page || home;
+  deleteBtn.disabled = !page || home;
+  publishBtn.disabled = archived;
+  const homeTitle = 'The home page cannot be archived or deleted';
+  archiveBtn.title = home ? homeTitle : (archived ? 'Restore this page as a draft' : 'Archive this page and remove its live HTML file');
+  deleteBtn.title = home ? homeTitle : 'Delete this page permanently';
+}
+
 function markDirty() {
   state.dirty = true;
   setSaveState('Unsaved');
@@ -120,6 +149,8 @@ function bindShell() {
   document.getElementById('btn-new-page').addEventListener('click', () => {
     document.getElementById('modal-new-page').showModal();
   });
+  document.getElementById('btn-archive-page').addEventListener('click', () => archiveOrRestorePage());
+  document.getElementById('btn-delete-page').addEventListener('click', () => deleteCurrentPage());
   document.getElementById('btn-import-html')?.addEventListener('click', () => openImportModal());
 
   document.getElementById('new-page-form').addEventListener('submit', async (e) => {
@@ -448,13 +479,30 @@ async function loadPages() {
   state.pages = data.pages;
   const select = document.getElementById('page-select');
   select.innerHTML = '';
-  state.pages.forEach((page) => {
-    const opt = document.createElement('option');
-    opt.value = page.id;
-    opt.textContent = page.title;
-    if (state.page && page.id === state.page.id) opt.selected = true;
-    select.appendChild(opt);
-  });
+  const addGroup = (label, pages) => {
+    if (!pages.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    pages.forEach((page) => {
+      const opt = document.createElement('option');
+      opt.value = page.id;
+      opt.textContent = page.title;
+      if (state.page && page.id === state.page.id) opt.selected = true;
+      group.appendChild(opt);
+    });
+    select.appendChild(group);
+  };
+  addGroup('Pages', state.pages.filter((page) => !page.archived_at));
+  addGroup('Archived', state.pages.filter((page) => page.archived_at));
+  if (state.page) {
+    select.value = String(state.page.id);
+  }
+}
+
+async function openNextActive(excludeId) {
+  const next = state.pages.find((page) => !page.archived_at && page.id !== excludeId)
+    || state.pages.find((page) => !page.archived_at);
+  if (next) await openPage(next.id);
 }
 
 async function loadTypes() {
@@ -492,13 +540,14 @@ async function openPage(id) {
   syncChromeModeUi();
   renderPageAssetExcludes();
   const live = document.getElementById('btn-live');
-  if (state.page.status === 'published') {
+  if (state.page.status === 'published' && !isArchivedPage(state.page)) {
     live.href = apiUrl(state.page.slug === 'index' ? '../index.html' : `../${state.page.slug}.html`);
     live.classList.remove('hidden');
   } else {
     live.classList.add('hidden');
   }
-  setSaveState(state.page.status === 'published' ? 'Published' : 'Draft');
+  setSaveState(pageStatusLabel(state.page));
+  syncPageActions();
   renderPalette();
   renderOutline();
   renderWrite();
@@ -942,7 +991,8 @@ async function saveDraft(silent) {
       state.selectedId = prevSelected;
     }
     state.dirty = false;
-    setSaveState('Saved');
+    setSaveState(isArchivedPage(state.page) ? 'Archived' : 'Saved');
+    syncPageActions();
     await loadPages();
     renderOutline();
     emitStudio('saved', state.page);
@@ -955,13 +1005,68 @@ async function saveDraft(silent) {
   }
 }
 
+async function archiveOrRestorePage() {
+  const page = state.page;
+  if (!page || isHomePage(page)) return;
+  if (isArchivedPage(page)) {
+    if (!window.confirm(`Restore ${page.title} as a draft? It stays off the site until you publish it.`)) return;
+    try {
+      const data = await api(`api/pages/${page.id}/restore`, { method: 'POST' });
+      state.page = { ...state.page, ...data.page, blocks: state.page.blocks };
+      await loadPages();
+      document.getElementById('btn-live').classList.add('hidden');
+      setSaveState('Draft');
+      syncPageActions();
+      await refreshPreview();
+      showStatus(toast, 'Page restored as a draft');
+    } catch (e) {
+      showStatus(toast, e.message, true);
+    }
+    return;
+  }
+  if (!window.confirm(`Archive ${page.title}? The live HTML file will be removed. You can restore it later.`)) return;
+  try {
+    if (state.dirty) {
+      await saveDraft(true);
+      if (state.dirty) return;
+    }
+    await api(`api/pages/${page.id}/archive`, { method: 'POST' });
+    const leftId = page.id;
+    state.dirty = false;
+    await loadPages();
+    await openNextActive(leftId);
+    showStatus(toast, 'Page archived');
+  } catch (e) {
+    showStatus(toast, e.message, true);
+  }
+}
+
+async function deleteCurrentPage() {
+  const page = state.page;
+  if (!page || isHomePage(page) || !isAdmin()) return;
+  if (!window.confirm(`Delete ${page.title} permanently? This cannot be undone.`)) return;
+  try {
+    await api(`api/pages/${page.id}`, { method: 'DELETE' });
+    const leftId = page.id;
+    state.dirty = false;
+    state.page = null;
+    await loadPages();
+    await openNextActive(leftId);
+    showStatus(toast, 'Page deleted');
+  } catch (e) {
+    showStatus(toast, e.message, true);
+  }
+}
+
 async function publishPage() {
-  if (!state.page) return;
+  if (!state.page || isArchivedPage(state.page)) return;
   await saveDraft(true);
   try {
     const data = await api(`api/pages/${state.page.id}/publish`, { method: 'POST' });
     state.page.status = 'published';
+    state.page.archived_at = null;
     setSaveState('Published');
+    syncPageActions();
     const live = document.getElementById('btn-live');
     live.href = data.url;
     live.classList.remove('hidden');

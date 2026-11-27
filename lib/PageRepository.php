@@ -6,10 +6,22 @@ class PageRepository
 {
     public static function all(): array
     {
+        return self::queryPages('');
+    }
+
+    /** Pages that are not archived. Navigation, sitemap, and publish-all use this list. */
+    public static function active(): array
+    {
+        return self::queryPages('WHERE p.archived_at IS NULL');
+    }
+
+    private static function queryPages(string $where): array
+    {
         $rows = Database::pdo()->query(
             'SELECT p.*, t.name AS template_name, t.slug AS template_slug
              FROM pages p
              LEFT JOIN templates t ON t.id = p.template_id
+             ' . $where . '
              ORDER BY CASE p.slug WHEN \'index\' THEN 0 ELSE 1 END, p.title'
         )->fetchAll();
         return array_map([self::class, 'formatPage'], $rows);
@@ -45,6 +57,8 @@ class PageRepository
         $row['footer_html'] = (string) ($row['footer_html'] ?? '');
         $row['disabled_stylesheet_ids'] = self::idList($row['disabled_stylesheet_ids'] ?? '[]');
         $row['disabled_script_ids'] = self::idList($row['disabled_script_ids'] ?? '[]');
+        $archived = $row['archived_at'] ?? null;
+        $row['archived_at'] = ($archived === null || $archived === '') ? null : (string) $archived;
         return $row;
     }
 
@@ -187,6 +201,30 @@ class PageRepository
             Response::error('Cannot delete the home page');
         }
         Database::pdo()->prepare('DELETE FROM pages WHERE id = ?')->execute([$id]);
+    }
+
+    public static function archive(int $id): array
+    {
+        $page = self::get($id, false);
+        if ($page['slug'] === 'index') {
+            Response::error('Cannot archive the home page');
+        }
+        Database::pdo()->prepare(
+            'UPDATE pages SET archived_at = datetime(\'now\'), status = \'draft\', updated_at = datetime(\'now\') WHERE id = ?'
+        )->execute([$id]);
+        return self::get($id, false);
+    }
+
+    public static function restore(int $id): array
+    {
+        $page = self::get($id, false);
+        if ($page['slug'] === 'index' || ($page['archived_at'] ?? null) === null) {
+            return $page;
+        }
+        Database::pdo()->prepare(
+            'UPDATE pages SET archived_at = NULL, status = \'draft\', updated_at = datetime(\'now\') WHERE id = ?'
+        )->execute([$id]);
+        return self::get($id, false);
     }
 
     public static function tree(int $pageId): array

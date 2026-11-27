@@ -238,6 +238,11 @@ SQL);
         if ($version < 7) {
             self::migrateToV7($pdo);
             $pdo->exec('PRAGMA user_version = 7');
+            $version = 7;
+        }
+        if ($version < 8) {
+            self::migrateToV8($pdo);
+            $pdo->exec('PRAGMA user_version = 8');
         }
 
         $count = (int) $pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
@@ -430,6 +435,17 @@ SQL);
         self::putPluginOption($pdo, 'cms', 'entries', $entries);
         self::putPluginOption($pdo, 'cms', 'next_post_id', $maxPostId > 0 ? $maxPostId + 1 : 1);
         self::putPluginOption($pdo, 'cms', 'next_source_id', $maxSourceId > 0 ? $maxSourceId + 1 : 1);
+    }
+
+    private static function migrateToV8(PDO $pdo): void
+    {
+        $cols = [];
+        foreach ($pdo->query('PRAGMA table_info(pages)')->fetchAll() as $col) {
+            $cols[$col['name']] = true;
+        }
+        if (!isset($cols['archived_at'])) {
+            $pdo->exec('ALTER TABLE pages ADD COLUMN archived_at TEXT');
+        }
     }
 
     private static function tableExists(PDO $pdo, string $table): bool

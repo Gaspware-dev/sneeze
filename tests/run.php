@@ -275,6 +275,77 @@ expect('publish.finished user', array_key_exists('user_id', is_array($finished) 
 expect('publish.finished pages', $finished['page_ids'] ?? null, [(int) $home['id']]);
 PluginHooks::forget('finish-test');
 
+$about = null;
+foreach (PageRepository::all() as $candidate) {
+    if (($candidate['slug'] ?? '') === 'about') {
+        $about = $candidate;
+    }
+}
+expect('seeded about', $about['slug'] ?? null, 'about');
+(new Publisher())->publishPage((int) $about['id']);
+expect('about file published', is_file($siteRoot . '/about.html'), true);
+$archivedAbout = $hostApi->archivePage((int) $about['id']);
+expect('archive sets draft', $archivedAbout['status'], 'draft');
+expect('archive sets timestamp', is_string($archivedAbout['archived_at'] ?? null) && $archivedAbout['archived_at'] !== '', true);
+expect('archive removes html', is_file($siteRoot . '/about.html'), false);
+$archivedSitemap = file_get_contents($siteRoot . '/sitemap.xml') ?: '';
+expect('sitemap drops archived', str_contains($archivedSitemap, 'about.html'), false);
+expectContains('sitemap keeps home after archive', $archivedSitemap, 'index.html');
+expect('active omits archived', in_array('about', array_column(PageRepository::active(), 'slug'), true), false);
+expect('all keeps archived', in_array('about', array_column(PageRepository::all(), 'slug'), true), true);
+$navAfterArchive = (new Compiler())->compilePage((int) $home['id'], false);
+expect('nav omits archived', str_contains($navAfterArchive, '>About</a>'), false);
+$backups = glob(Config::dataDir() . '/backups/about.html/*.html') ?: [];
+expect('archive keeps a backup', count($backups) >= 1, true);
+
+$restoredAbout = $hostApi->restorePage((int) $about['id']);
+expect('restore is draft', $restoredAbout['status'], 'draft');
+expect('restore clears archive', $restoredAbout['archived_at'], null);
+expect('restore does not write html', is_file($siteRoot . '/about.html'), false);
+
+$hostApi->archivePage((int) $about['id']);
+(new Publisher())->publishAll(null);
+expect('publish all skips archived html', is_file($siteRoot . '/about.html'), false);
+$allSitemap = file_get_contents($siteRoot . '/sitemap.xml') ?: '';
+expect('publish all sitemap skips archived', str_contains($allSitemap, 'about.html'), false);
+expectContains('publish all sitemap keeps home', $allSitemap, 'index.html');
+
+$hostApi->restorePage((int) $about['id']);
+(new Publisher())->publishPage((int) $about['id']);
+expect('about republished for delete', is_file($siteRoot . '/about.html'), true);
+$hostApi->deletePage((int) $about['id']);
+expect('delete removes html', is_file($siteRoot . '/about.html'), false);
+$aboutStillThere = false;
+foreach (PageRepository::all() as $candidate) {
+    if ((int) $candidate['id'] === (int) $about['id']) {
+        $aboutStillThere = true;
+    }
+}
+expect('delete removes row', $aboutStillThere, false);
+$deleteSitemap = file_get_contents($siteRoot . '/sitemap.xml') ?: '';
+expect('sitemap drops deleted', str_contains($deleteSitemap, 'about.html'), false);
+
+expectRejected('archive home rejected', $installDir, 'PageRepository::archive(' . (int) $home['id'] . ');', 'Cannot archive the home page');
+expectRejected('delete home rejected', $installDir, 'PageRepository::delete(' . (int) $home['id'] . ');', 'Cannot delete the home page');
+expect('home still present', PageRepository::get((int) $home['id'], false)['slug'], 'index');
+
+$hidden = PageRepository::create([
+    'title' => 'Hidden',
+    'slug' => 'hidden',
+    'template_id' => $home['template_id'],
+]);
+$hostApi->archivePage((int) $hidden['id']);
+$hiddenSaved = PageRepository::update((int) $hidden['id'], ['title' => 'Hidden still']);
+expect('save keeps archive', ($hiddenSaved['archived_at'] ?? null) !== null, true);
+expect('save keeps draft', $hiddenSaved['status'], 'draft');
+expectRejected(
+    'publish archived rejected',
+    $installDir,
+    '(new Publisher())->publishPage(' . (int) $hidden['id'] . ');',
+    'Restore this page before publishing'
+);
+expect('archived publish wrote nothing', is_file($siteRoot . '/hidden.html'), false);
+
 $withJs = (new Compiler())->compilePage((int) $home['id'], false, [
     'custom_js' => "const greet = (name: string): string => `ok`;\nconsole.log(greet('a'));\n",
 ]);
@@ -880,7 +951,7 @@ Database::pdo()->exec('PRAGMA user_version = 6');
 remigrate();
 expect('legacy copy skipped', pluginOption('cms', 'posts')[0]['title'] ?? '', 'Legacy post');
 expect('legacy table not dropped', (int) Database::pdo()->query('SELECT COUNT(*) FROM cms_posts')->fetchColumn(), 1);
-expect('user version 7', (int) Database::pdo()->query('PRAGMA user_version')->fetchColumn(), 7);
+expect('user version 8', (int) Database::pdo()->query('PRAGMA user_version')->fetchColumn(), 8);
 
 $errors = w3cErrors($written);
 expect('w3c errors', $errors, []);
@@ -938,6 +1009,41 @@ function pluginById(array $plugins, string $id): ?array
         }
     }
     return null;
+}
+
+function expectRejected(string $label, string $installDir, string $call, string $needle): void
+{
+    $repo = dirname(__DIR__);
+    $script = $installDir . '/reject-' . bin2hex(random_bytes(4)) . '.php';
+    $source = "<?php\ndeclare(strict_types=1);\n"
+        . '$repo = ' . var_export($repo, true) . ";\n"
+        . '$install = ' . var_export($installDir, true) . ";\n"
+        . <<<'PHP'
+spl_autoload_register(function (string $class) use ($repo): void {
+    $file = $repo . '/lib/' . $class . '.php';
+    if (is_file($file)) {
+        require $file;
+    }
+});
+Config::init($install);
+Database::connect(Config::dataDir());
+PHP
+        . "\n" . $call . "\n";
+    file_put_contents($script, $source);
+    $pipes = [];
+    $proc = proc_open([PHP_BINARY, $script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    @unlink($script);
+    $data = json_decode((string) $stdout, true);
+    $message = is_array($data) ? (string) ($data['error'] ?? '') : '';
+    if ($message === '') {
+        fwrite(STDERR, "reject helper {$label}\nstderr: {$stderr}\nstdout: {$stdout}\n");
+    }
+    expectContains($label, $message, $needle);
 }
 
 function w3cErrors(string $html): array
